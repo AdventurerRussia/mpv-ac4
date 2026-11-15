@@ -1,13 +1,13 @@
 # mpv AC-4 Edition (Windows x64)
 
 [![Release](https://img.shields.io/github/v/release/AdventurerRussia/mpv-ac4?include_prereleases&color=blue&style=flat-square)](https://github.com/AdventurerRussia/mpv-ac4/releases/latest)
-[![mpv version](https://img.shields.io/badge/mpv-v0.42.0--dev%20(a61f6c3)-orange?style=flat-square)](https://github.com/mpv-player/mpv)
+[![mpv version](https://img.shields.io/badge/mpv-v0.42.0--dev%20(bb4823e)-orange?style=flat-square)](https://github.com/mpv-player/mpv)
 [![FFmpeg](https://img.shields.io/badge/FFmpeg-9.0.2%20("Lei")-red?style=flat-square)](https://github.com/FFmpeg/FFmpeg/tree/release/9.0)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64-informational?style=flat-square)](https://github.com/AdventurerRussia/mpv-ac4/releases/latest)
 [![Codec](https://img.shields.io/badge/audio-Dolby%20AC--4%20(ETSI%20TS%20103%20190)-success?style=flat-square)](https://www.etsi.org/deliver/etsi_ts/103100_103199/10319001/01.03.01_60/ts_10319001v010301p.pdf)
 [![License](https://img.shields.io/badge/license-GPLv3-green?style=flat-square)](https://www.gnu.org/licenses/gpl-3.0.html)
 
-A custom Windows x64 build of **[mpv](https://github.com/mpv-player/mpv)** media player (version **v0.42.0-dev**, git commit `a61f6c3`) featuring native decoding of **Dolby AC-4** audio streams ([ETSI TS 103 190-1](https://www.etsi.org/deliver/etsi_ts/103100_103199/10319001/01.03.01_60/ts_10319001v010301p.pdf)), including over-the-air digital television broadcasts (**ATSC 3.0 / DVB-T2**).
+A custom Windows x64 build of **[mpv](https://github.com/mpv-player/mpv)** media player (version **v0.42.0-dev**, git commit [`bb4823e`](https://github.com/mpv-player/mpv/commit/bb4823e5f0eb92a830242e60dfdcc50d1f2e0410)) featuring native decoding of **Dolby AC-4** audio streams ([ETSI TS 103 190-1](https://www.etsi.org/deliver/etsi_ts/103100_103199/10319001/01.03.01_60/ts_10319001v010301p.pdf)), including over-the-air digital television broadcasts (**ATSC 3.0 / DVB-T2**).
 
 ---
 
@@ -18,7 +18,7 @@ In upstream [FFmpeg](https://github.com/FFmpeg/FFmpeg) and standard mpv distribu
 In this project, the native AC-4 decoder developed by **[Paul B Mahol (richardpl)](https://github.com/richardpl)** as part of the **[librempeg](https://github.com/librempeg/librempeg)** fork has been ported and adapted for the latest stable **[FFmpeg 9.0.2 ("Lei")](https://github.com/FFmpeg/FFmpeg/tree/release/9.0)** (a patch for **[FFmpeg 7.1](https://github.com/FFmpeg/FFmpeg/tree/release/7.1)** is also provided), preserving the `libswresample` resampling library required by mpv. The mpv player is built against this custom FFmpeg 9.0.2 (`libavcodec 63`) and decodes AC-4 audio directly out of the box without requiring external filters.
 
 ### 📌 Core Component Versions:
-* **mpv**: `v0.42.0-dev` (commit [`a61f6c3`](https://github.com/mpv-player/mpv/commit/a61f6c3abd87510072df01c846b941031b079a02))
+* **mpv**: `v0.42.0-dev` (commit [`bb4823e`](https://github.com/mpv-player/mpv/commit/bb4823e5f0eb92a830242e60dfdcc50d1f2e0410))
 * **FFmpeg**: `n9.0.2 ("Lei")` (`libavcodec 63.1.102`, `libavformat 63.1.102`, `libavutil 61.1.102`, `libswresample 7.1.102`)
 * **libplacebo**: `v7.387.0`
 * **libass**: `0.17.4`
