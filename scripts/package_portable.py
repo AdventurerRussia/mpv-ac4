@@ -71,11 +71,12 @@ if os.path.exists(OLD_PORTABLE):
 print(f"=== Step 1: Preparing output dir: {OUTPUT_DIR} ===")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-KEEP_DIRS  = {"mpv", "fonts", "scripts", "script-opts", "installer", "doc"}
+KEEP_DIRS  = {"mpv", "fonts", "scripts", "script-opts", "installer", "doc", "shaders"}
+KEEP_FILES = {"yt-dlp.exe", "mpv-icon.ico", "mpv-document.ico"}
 
 for entry in os.listdir(OUTPUT_DIR):
     full = os.path.join(OUTPUT_DIR, entry)
-    if entry in KEEP_DIRS:
+    if entry in KEEP_DIRS or entry.lower() in {k.lower() for k in KEEP_FILES}:
         continue
     if os.path.isdir(full):
         shutil.rmtree(full)
