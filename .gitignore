@@ -1,0 +1,11 @@
+*.o
+*.a
+*.dll
+*.exe
+*.zip
+*.7z
+build/
+mpv-build/
+__pycache__/
+*.swp
+.DS_Store
