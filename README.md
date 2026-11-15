@@ -13,7 +13,7 @@
 
 В официальном [FFmpeg](https://github.com/FFmpeg/FFmpeg) и стандартных сборках mpv (включая популярные сборки от [shinchiro](https://github.com/shinchiro/mpv-winbuild-cmake) и [zhongfly](https://github.com/zhongfly/mpv-winbuild)) декодер AC-4 отсутствует — в коде зарегистрирован лишь демультиплексор элементарного потока. При попытке воспроизвести файл с дорожкой AC-4 плеер не может декодировать звук.
 
-В данном проекте нативный декодер AC-4, написанный разработчиком **[Paul B Mahol (richardpl)](https://github.com/richardpl)** в рамках форка **[librempeg](https://github.com/librempeg/librempeg)**, был полностью портирован и адаптирован для стабильной ветки **[FFmpeg 7.1](https://github.com/FFmpeg/FFmpeg/tree/release/7.1)** с сохранением подсистемы передискретизации `libswresample`. Плеер mpv скомпилирован с этим кастомным FFmpeg и декодирует аудиодорожки AC-4 напрямую без сторонних фильтров.
+В данном проекте нативный декодер AC-4, написанный разработчиком **[Paul B Mahol (richardpl)](https://github.com/richardpl)** в рамках форка **[librempeg](https://github.com/librempeg/librempeg)**, был полностью портирован и адаптирован для актуальной стабильной ветки **[FFmpeg 9.0.2 ("Lei")](https://github.com/FFmpeg/FFmpeg/tree/release/9.0)** (а также доступен патч для **[FFmpeg 7.1](https://github.com/FFmpeg/FFmpeg/tree/release/7.1)**) с сохранением подсистемы передискретизации `libswresample`. Плеер mpv скомпилирован с этим кастомным FFmpeg 9.0.2 (`libavcodec 63`) и декодирует аудиодорожки AC-4 напрямую без сторонних фильтров.
 
 ---
 
@@ -57,14 +57,14 @@ MPV PLAYER AC-4/
 
 ---
 
-## 🛠 Технические подробности порта ([FFmpeg 7.1](https://github.com/FFmpeg/FFmpeg/tree/release/7.1))
+## 🛠 Технические подробности порта ([FFmpeg 9.0.2](https://github.com/FFmpeg/FFmpeg/tree/release/9.0) / [7.1](https://github.com/FFmpeg/FFmpeg/tree/release/7.1))
 
 1. **`libavcodec/kbdwin.h`**:
    Максимальный размер окна Кайзера-Бесселя (`FF_KBD_WINDOW_MAX`) увеличен с `1024` до `2048` точек, так как AC-4 применяет окно длиной 2048 точек (без этого плеер падал по `av_assert0`).
 2. **`libavcodec/ac4dec.c`**:
-   Реализована статическая функция векторного умножения `ac4_vector_fmul_reverse_c` взамен скрытого приватного символа FFmpeg 7.1.
+   Реализована статическая функция векторного умножения `ac4_vector_fmul_reverse_c` взамен скрытого приватного символа. Для FFmpeg 9.0 декодер зарегистрирован через внутреннюю структуру `FFCodec ff_ac4_decoder`.
 3. **`libavcodec/ac4_parser.c`**:
-   Парсер адаптирован под открытый API структуры `AVCodecParser` вместо упразднённого внутреннего `parser_internal.h`.
+   В FFmpeg 9.0 парсер переведён на внутренний интерфейс `parser_internal.h` со структурой `FFCodecParser` и макросом `PARSER_CODEC_LIST(AV_CODEC_ID_AC4)`. (Для FFmpeg 7.1 используется открытый интерфейс `AVCodecParser`).
 4. **Регистрация в кодеках**:
    `ff_ac4_decoder` и `ff_ac4_parser` зарегистрированы в `allcodecs.c`, `parsers.c` и `libavcodec/Makefile`.
 
@@ -83,11 +83,11 @@ pacman -S --needed --noconfirm git base-devel mingw-w64-ucrt-x86_64-toolchain \
     mingw-w64-ucrt-x86_64-libplacebo
 ```
 
-### 2. Клонирование и наложение патча FFmpeg
+### 2. Клонирование и наложение патча FFmpeg (9.0.2)
 ```bash
-git clone --depth 1 -b n7.1 https://github.com/FFmpeg/FFmpeg.git ffmpeg
+git clone --depth 1 -b n9.0.2 https://github.com/FFmpeg/FFmpeg.git ffmpeg
 cd ffmpeg
-git apply ../patches/ffmpeg-7.1-ac4.patch
+git apply ../patches/ffmpeg-9.0.2-ac4.patch
 
 ./configure \
     --prefix=/install \
