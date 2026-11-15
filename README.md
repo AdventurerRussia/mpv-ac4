@@ -5,75 +5,76 @@
 [![Codec](https://img.shields.io/badge/audio-Dolby%20AC--4%20(ETSI%20TS%20103%20190)-success?style=flat-square)](https://www.etsi.org/deliver/etsi_ts/103100_103199/10319001/01.03.01_60/ts_10319001v010301p.pdf)
 [![License](https://img.shields.io/badge/license-GPLv3-green?style=flat-square)](https://www.gnu.org/licenses/gpl-3.0.html)
 
-Специальная сборка медиаплеера **[mpv](https://github.com/mpv-player/mpv)** с нативной поддержкой декодирования аудиопотоков **Dolby AC-4** ([ETSI TS 103 190-1](https://www.etsi.org/deliver/etsi_ts/103100_103199/10319001/01.03.01_60/ts_10319001v010301p.pdf)), включая эфирные ТВ-записи **ATSC 3.0 / DVB-T2**.
+A custom Windows x64 build of **[mpv](https://github.com/mpv-player/mpv)** media player featuring native decoding of **Dolby AC-4** audio streams ([ETSI TS 103 190-1](https://www.etsi.org/deliver/etsi_ts/103100_103199/10319001/01.03.01_60/ts_10319001v010301p.pdf)), including over-the-air digital television broadcasts (**ATSC 3.0 / DVB-T2**).
 
 ---
 
-## ⚡ О проекте
+## ⚡ About The Project
 
-В официальном [FFmpeg](https://github.com/FFmpeg/FFmpeg) и стандартных сборках mpv (включая популярные сборки от [shinchiro](https://github.com/shinchiro/mpv-winbuild-cmake) и [zhongfly](https://github.com/zhongfly/mpv-winbuild)) декодер AC-4 отсутствует — в коде зарегистрирован лишь демультиплексор элементарного потока. При попытке воспроизвести файл с дорожкой AC-4 плеер не может декодировать звук.
+In upstream [FFmpeg](https://github.com/FFmpeg/FFmpeg) and standard mpv distributions (including popular builds by [shinchiro](https://github.com/shinchiro/mpv-winbuild-cmake) and [zhongfly](https://github.com/zhongfly/mpv-winbuild)), an AC-4 audio decoder is not present — upstream code only includes an elementary stream demuxer. When attempting to play a video with an AC-4 audio stream, players fail to decode any sound.
 
-В данном проекте нативный декодер AC-4, написанный разработчиком **[Paul B Mahol (richardpl)](https://github.com/richardpl)** в рамках форка **[librempeg](https://github.com/librempeg/librempeg)**, был полностью портирован и адаптирован для актуальной стабильной ветки **[FFmpeg 9.0.2 ("Lei")](https://github.com/FFmpeg/FFmpeg/tree/release/9.0)** (а также доступен патч для **[FFmpeg 7.1](https://github.com/FFmpeg/FFmpeg/tree/release/7.1)**) с сохранением подсистемы передискретизации `libswresample`. Плеер mpv скомпилирован с этим кастомным FFmpeg 9.0.2 (`libavcodec 63`) и декодирует аудиодорожки AC-4 напрямую без сторонних фильтров.
+In this project, the native AC-4 decoder developed by **[Paul B Mahol (richardpl)](https://github.com/richardpl)** as part of the **[librempeg](https://github.com/librempeg/librempeg)** fork has been ported and adapted for the latest stable **[FFmpeg 9.0.2 ("Lei")](https://github.com/FFmpeg/FFmpeg/tree/release/9.0)** (a patch for **[FFmpeg 7.1](https://github.com/FFmpeg/FFmpeg/tree/release/7.1)** is also provided), preserving the `libswresample` resampling library required by mpv. The mpv player is built against this custom FFmpeg 9.0.2 (`libavcodec 63`) and decodes AC-4 audio directly out of the box without requiring external filters.
 
 ---
 
-## 📥 Скачать готовую сборку (Portable)
+## 📥 Download Prebuilt Release (Portable)
 
-Готовая портативная сборка для Windows x64 доступна во вкладке **Releases**:
-* **[Скачать MPV-AC4-Windows-x64.zip](https://github.com/AdventurerRussia/mpv-ac4/releases/latest)**
+Ready-to-use portable packages for Windows x64 are available in the **Releases** tab:
+* **[Download MPV-AC4-Windows-x64.zip](https://github.com/AdventurerRussia/mpv-ac4/releases/latest)**
 
-### Структура каталога (схема [shinchiro](https://github.com/shinchiro/mpv-winbuild-cmake) / [rossy](https://github.com/rossy/mpv-install)):
+### Folder Structure ([shinchiro](https://github.com/shinchiro/mpv-winbuild-cmake) / [rossy](https://github.com/rossy/mpv-install) standard):
 ```text
 MPV PLAYER AC-4/
-├── fonts/               # Пользовательские шрифты интерфейса и субтитров
-├── installer/           # Скрипты интеграции в Windows (rossy/mpv-install)
-│   ├── mpv-install.bat  # Регистрация плеера в системе и ассоциация файлов (ПКМ -> Запуск от имени администратора)
-│   └── mpv-uninstall.bat# Удаление ассоциаций и записей реестра
-├── mpv/                 # Каталог настроек:
-│   ├── fonts.conf       # Конфигурация подсистемы шрифтов
-│   ├── input.conf       # Горячие клавиши
-│   └── mpv.conf         # Настройки видео, аудио и аппаратного ускорения
-├── script-opts/         # Конфигурации скриптов
-├── scripts/             # Lua / JS скрипты
-├── mpv-document.ico     # Иконка ассоциированных видеофайлов
-├── mpv-icon.ico         # Иконка плеера
-├── mpv.com              # Консольная версия с выводом логов
-└── mpv.exe              # Основной исполняемый файл
+├── fonts/               # User fonts for OSD and subtitles
+├── installer/           # Windows file association scripts (rossy/mpv-install)
+│   ├── mpv-install.bat  # Register player in Windows and associate extensions (Right click -> Run as administrator)
+│   └── mpv-uninstall.bat# Unregister player and remove registry keys
+├── mpv/                 # Configuration directory:
+│   ├── fonts.conf       # Fontconfig configuration
+│   ├── input.conf       # Keybindings
+│   └── mpv.conf         # Video, audio, and GPU hardware acceleration options
+├── script-opts/         # Script configuration files
+├── scripts/             # Lua and JavaScript plugins
+├── mpv-document.ico     # File icon for associated media
+├── mpv-icon.ico         # Player executable icon
+├── mpv.com              # Console wrapper for log output
+└── mpv.exe              # Main GUI executable
 ```
+> All 39 runtime dependency DLLs (FFmpeg, libplacebo, libass, etc.) are located directly next to `mpv.exe` and marked as hidden (`attrib +h`) to maintain a clean, uncluttered directory view matching shinchiro's release style.
 
 ---
 
-## 🎯 Поддерживаемые возможности
+## 🎯 Supported Features
 
-| Формат / Функция | Статус | Примечания |
+| Format / Feature | Status | Details |
 |---|:---:|---|
-| **AC-4 Stereo (2.0)** | ✅ Проверено | 48000 Hz, чистый звук без рассинхрона (`believer.mp4`, `Lady Gaga Bloody Mary`) |
-| **AC-4 Multichannel (5.1)** | ✅ Проверено | 6 каналов, проверено на реальном ТВ-эфире ATSC 3.0 (`KDAF.ts`) |
-| **Контейнеры MP4 / MOV** | ✅ Поддерживается | Стандартные медиафайлы с дорожками AC-4 |
-| **Контейнеры MPEG-TS** | ✅ Поддерживается | Эфирные записи цифрового телевидения ATSC 3.0 и DVB-T2 |
-| **Мультиязычные дорожки** | ✅ Поддерживается | Переключение дорожек и презентаций через клавишу `#` (`--aid=1`, `--aid=2`) |
-| **Частота 46034 Гц (NTSC pull-down)** | ✅ Поддерживается | Специфичный для 59.94 fps ATSC 3.0 контента клок таймингов (`ratio 25025:24000`) |
-| **AC-4 Atmos (Part 2 / A-JOC)** | ❌ Не поддерживается | Динамические 3D-объекты (заглушка в декодере `AVERROR_PATCHWELCOME`). В C-коде FFmpeg открытой реализации Atmos на данный момент не существует (экспериментальные наработки ведутся на других языках, например Rust-проект [MacinDecode-Spatial-Player](https://github.com/SakuzyPeng/MacinDecode-Spatial-Player)). |
+| **AC-4 Stereo (2.0)** | ✅ Verified | 48000 Hz, clean audio with perfect A/V sync (`believer.mp4`, `Lady Gaga Bloody Mary`) |
+| **AC-4 Multichannel (5.1)** | ✅ Verified | 6 channels, tested on real ATSC 3.0 broadcast captures (`KDAF.ts`) |
+| **MP4 / MOV Containers** | ✅ Supported | Standard MP4/ISOBMFF containers containing AC-4 tracks |
+| **MPEG-TS Containers** | ✅ Supported | Digital television broadcast captures (ATSC 3.0, DVB-T2) |
+| **Multi-Language Audio Tracks** | ✅ Supported | Switching between presentations/substreams with `#` (`--aid=1`, `--aid=2`) |
+| **46034 Hz Rate (NTSC pull-down)** | ✅ Supported | Spec-compliant clock for 59.94 fps ATSC 3.0 broadcast video (`ratio 25025:24000`) |
+| **AC-4 Atmos (Part 2 / A-JOC)** | ❌ Not Supported | Dynamic 3D audio objects (stubbed in decoder with `AVERROR_PATCHWELCOME`). An open-source C implementation of AC-4 Atmos does not yet exist in FFmpeg (experimental research is ongoing in other languages, e.g., the Rust project [MacinDecode-Spatial-Player](https://github.com/SakuzyPeng/MacinDecode-Spatial-Player)). |
 
 ---
 
-## 🛠 Технические подробности порта ([FFmpeg 9.0.2](https://github.com/FFmpeg/FFmpeg/tree/release/9.0) / [7.1](https://github.com/FFmpeg/FFmpeg/tree/release/7.1))
+## 🛠 Technical Details of the Port ([FFmpeg 9.0.2](https://github.com/FFmpeg/FFmpeg/tree/release/9.0) / [7.1](https://github.com/FFmpeg/FFmpeg/tree/release/7.1))
 
 1. **`libavcodec/kbdwin.h`**:
-   Максимальный размер окна Кайзера-Бесселя (`FF_KBD_WINDOW_MAX`) увеличен с `1024` до `2048` точек, так как AC-4 применяет окно длиной 2048 точек (без этого плеер падал по `av_assert0`).
+   The maximum Kaiser-Bessel window size (`FF_KBD_WINDOW_MAX`) has been increased from `1024` to `2048` points. AC-4 applies a 2048-point Kaiser-Bessel window, and without this change decoding aborted on `av_assert0(n <= FF_KBD_WINDOW_MAX)`.
 2. **`libavcodec/ac4dec.c`**:
-   Реализована статическая функция векторного умножения `ac4_vector_fmul_reverse_c` взамен скрытого приватного символа. Для FFmpeg 9.0 декодер зарегистрирован через внутреннюю структуру `FFCodec ff_ac4_decoder`.
+   Implemented a dedicated static `ac4_vector_fmul_reverse_c` function to eliminate dependencies on private unexported DSP symbols. For FFmpeg 9.0, registered through the internal codec structure `const FFCodec ff_ac4_decoder`.
 3. **`libavcodec/ac4_parser.c`**:
-   В FFmpeg 9.0 парсер переведён на внутренний интерфейс `parser_internal.h` со структурой `FFCodecParser` и макросом `PARSER_CODEC_LIST(AV_CODEC_ID_AC4)`. (Для FFmpeg 7.1 используется открытый интерфейс `AVCodecParser`).
-4. **Регистрация в кодеках**:
-   `ff_ac4_decoder` и `ff_ac4_parser` зарегистрированы в `allcodecs.c`, `parsers.c` и `libavcodec/Makefile`.
+   Adapted to the modern internal parser API of FFmpeg 9.0 (`parser_internal.h`, `const FFCodecParser ff_ac4_parser`, and `PARSER_CODEC_LIST(AV_CODEC_ID_AC4)`). For FFmpeg 7.1, an `AVCodecParser` public structure is used.
+4. **Build System Registration**:
+   `ff_ac4_decoder` and `ff_ac4_parser` are registered in `allcodecs.c`, `parsers.c`, and `libavcodec/Makefile`.
 
 ---
 
-## 🔨 Сборка из исходников (Windows UCRT64 / [MSYS2](https://www.msys2.org/))
+## 🔨 Building From Source (Windows UCRT64 / [MSYS2](https://www.msys2.org/))
 
-### 1. Подготовка окружения
-Установите [MSYS2](https://www.msys2.org/) и тулчейн UCRT64:
+### 1. Prepare Environment
+Install [MSYS2](https://www.msys2.org/) and the UCRT64 toolchain:
 ```bash
 pacman -Syu --noconfirm
 pacman -S --needed --noconfirm git base-devel mingw-w64-ucrt-x86_64-toolchain \
@@ -83,7 +84,7 @@ pacman -S --needed --noconfirm git base-devel mingw-w64-ucrt-x86_64-toolchain \
     mingw-w64-ucrt-x86_64-libplacebo
 ```
 
-### 2. Клонирование и наложение патча FFmpeg (9.0.2)
+### 2. Clone FFmpeg and Apply Patch (9.0.2)
 ```bash
 git clone --depth 1 -b n9.0.2 https://github.com/FFmpeg/FFmpeg.git ffmpeg
 cd ffmpeg
@@ -103,7 +104,7 @@ make install
 cd ..
 ```
 
-### 3. Сборка mpv
+### 3. Build mpv
 ```bash
 git clone --depth 1 https://github.com/mpv-player/mpv.git mpv
 export PKG_CONFIG_PATH="/install/lib/pkgconfig:$PKG_CONFIG_PATH"
@@ -120,10 +121,10 @@ ninja -C mpv-build install
 
 ---
 
-## 📜 Авторы и лицензии
+## 📜 Authors & Licenses
 
 - **[mpv](https://github.com/mpv-player/mpv)**: GPLv2+ / LGPLv2.1+
-- **[FFmpeg](https://github.com/FFmpeg/FFmpeg)**: GPLv3 (включает код декодера AC-4)
-- Автор оригинального декодера AC-4: **[Paul B Mahol (richardpl)](https://github.com/richardpl)** ([Librempeg project](https://github.com/librempeg/librempeg))
-- Скрипты интеграции Windows: **[rossy/mpv-install](https://github.com/rossy/mpv-install)**
-- Референсные сборочные скрипты: **[shinchiro/mpv-winbuild-cmake](https://github.com/shinchiro/mpv-winbuild-cmake)**
+- **[FFmpeg](https://github.com/FFmpeg/FFmpeg)**: GPLv3 (includes AC-4 decoder code)
+- Original AC-4 decoder implementation: **[Paul B Mahol (richardpl)](https://github.com/richardpl)** ([librempeg project](https://github.com/librempeg/librempeg))
+- Windows installer scripts: **[rossy/mpv-install](https://github.com/rossy/mpv-install)**
+- Reference build system: **[shinchiro/mpv-winbuild-cmake](https://github.com/shinchiro/mpv-winbuild-cmake)**
