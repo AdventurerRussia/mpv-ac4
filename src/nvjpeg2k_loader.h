@@ -26,32 +26,20 @@
 #include <stdint.h>
 #include <stddef.h>
 
-/* ------------------------------------------------------------------ */
-/* Opaque handle types (forward-declared as incomplete structs)        */
-/* ------------------------------------------------------------------ */
-
 typedef struct nvjpeg2kHandle         *nvjpeg2kHandle_t;
 typedef struct nvjpeg2kDecodeState    *nvjpeg2kDecodeState_t;
 typedef struct nvjpeg2kStream         *nvjpeg2kStream_t;
 typedef struct nvjpeg2kDecodeParams   *nvjpeg2kDecodeParams_t;
 
-/* ------------------------------------------------------------------ */
-/* CUDA opaque types we need for cuMemcpyDtoH (from nvcuda.dll)       */
-/* ------------------------------------------------------------------ */
-
 typedef unsigned long long CUdeviceptr;
 typedef int                CUresult;
 #define CUDA_SUCCESS 0
-
-/* ------------------------------------------------------------------ */
-/* nvJPEG2000 status enum                                              */
-/* ------------------------------------------------------------------ */
 
 typedef enum {
     NVJPEG2K_STATUS_SUCCESS           = 0,
     NVJPEG2K_STATUS_NOT_INITIALIZED   = 1,
     NVJPEG2K_STATUS_INVALID_PARAMETER = 2,
-    NVJPEG2K_STATUS_BAD_JPEG         = 3,
+    NVJPEG2K_STATUS_BAD_JPEG          = 3,
     NVJPEG2K_STATUS_JPEG_NOT_SUPPORTED = 4,
     NVJPEG2K_STATUS_ALLOCATOR_FAILURE = 5,
     NVJPEG2K_STATUS_EXECUTION_FAILED  = 6,
@@ -60,140 +48,101 @@ typedef enum {
     NVJPEG2K_STATUS_IMPLEMENTATION_NOT_SUPPORTED = 9,
 } nvjpeg2kStatus_t;
 
-/* ------------------------------------------------------------------ */
-/* nvJPEG2000 pixel type enum                                          */
-/* ------------------------------------------------------------------ */
-
 typedef enum {
-    NVJPEG2K_UINT8  = 0,  /* 8-bit unsigned  */
-    NVJPEG2K_UINT16 = 1,  /* 16-bit unsigned */
-    NVJPEG2K_INT16  = 2,  /* 16-bit signed   */
+    NVJPEG2K_UINT8  = 0,
+    NVJPEG2K_UINT16 = 1,
+    NVJPEG2K_INT16  = 2,
 } nvjpeg2kImageType_t;
 
-/* ------------------------------------------------------------------ */
-/* nvJPEG2000 image info structs                                       */
-/* ------------------------------------------------------------------ */
+typedef enum {
+    NVJPEG2K_COLORSPACE_UNKNOWN = 0,
+    NVJPEG2K_COLORSPACE_SRGB    = 1,
+    NVJPEG2K_COLORSPACE_GRAY    = 2,
+    NVJPEG2K_COLORSPACE_SYCC    = 3,
+} nvjpeg2kColorSpace_t;
 
-/* Per-component info returned by nvjpeg2kStreamGetImageComponentInfo */
+typedef enum {
+    NVJPEG2K_LIBRARY_MAJOR_VERSION = 0,
+    NVJPEG2K_LIBRARY_MINOR_VERSION = 1,
+    NVJPEG2K_LIBRARY_PATCH_LEVEL   = 2,
+} nvjpeg2kLibraryPropertyType;
+
 typedef struct {
-    uint32_t component_width;   /* width of this component  */
-    uint32_t component_height;  /* height of this component */
-    uint8_t  precision;         /* bit-depth (e.g. 12)      */
-    uint8_t  sgn;               /* 0=unsigned, 1=signed     */
+    uint32_t component_width;
+    uint32_t component_height;
+    uint8_t  precision;
+    uint8_t  sgn;
 } nvjpeg2kImageComponentInfo_t;
 
-/* Global image info returned by nvjpeg2kStreamGetImageInfo */
 typedef struct {
-    uint32_t image_width;       /* full image width  */
-    uint32_t image_height;      /* full image height */
-    uint32_t tile_width;        /* tile width  */
-    uint32_t tile_height;       /* tile height */
-    uint32_t num_tiles_x;       /* number of tiles in X */
-    uint32_t num_tiles_y;       /* number of tiles in Y */
-    uint32_t num_components;    /* number of colour components */
+    uint32_t image_width;
+    uint32_t image_height;
+    uint32_t tile_width;
+    uint32_t tile_height;
+    uint32_t num_tiles_x;
+    uint32_t num_tiles_y;
+    uint32_t num_components;
 } nvjpeg2kImageInfo_t;
 
-/* Decoded image descriptor (device or host pointers per component) */
 typedef struct {
-    void               **pixel_data;     /* array[num_components] of pointers */
-    size_t              *pitch_in_bytes; /* array[num_components] of pitches  */
-    nvjpeg2kImageType_t  pixel_type;     /* data type stored                  */
+    void               **pixel_data;
+    size_t              *pitch_in_bytes;
+    nvjpeg2kImageType_t  pixel_type;
     uint32_t             num_components;
 } nvjpeg2kImage_t;
 
-/* ------------------------------------------------------------------ */
-/* Function pointer typedefs                                           */
-/* ------------------------------------------------------------------ */
-
-/* nvjpeg2kCreateSimple(nvjpeg2kHandle_t *handle) */
 typedef nvjpeg2kStatus_t (*PFN_nvjpeg2kCreateSimple)(nvjpeg2kHandle_t *handle);
-
-/* nvjpeg2kDestroy(nvjpeg2kHandle_t handle) */
 typedef nvjpeg2kStatus_t (*PFN_nvjpeg2kDestroy)(nvjpeg2kHandle_t handle);
-
-/* nvjpeg2kDecodeStateCreate(nvjpeg2kHandle_t handle,
-                              nvjpeg2kDecodeState_t *decode_state) */
 typedef nvjpeg2kStatus_t (*PFN_nvjpeg2kDecodeStateCreate)(
     nvjpeg2kHandle_t handle, nvjpeg2kDecodeState_t *decode_state);
-
-/* nvjpeg2kDecodeStateDestroy(nvjpeg2kDecodeState_t decode_state) */
 typedef nvjpeg2kStatus_t (*PFN_nvjpeg2kDecodeStateDestroy)(
     nvjpeg2kDecodeState_t decode_state);
-
-/* nvjpeg2kStreamCreate(nvjpeg2kStream_t *stream) */
 typedef nvjpeg2kStatus_t (*PFN_nvjpeg2kStreamCreate)(nvjpeg2kStream_t *stream);
-
-/* nvjpeg2kStreamDestroy(nvjpeg2kStream_t stream) */
 typedef nvjpeg2kStatus_t (*PFN_nvjpeg2kStreamDestroy)(nvjpeg2kStream_t stream);
-
-/* nvjpeg2kStreamParse(nvjpeg2kHandle_t handle,
-                        const unsigned char *data, size_t length,
-                        int save_metadata, int save_stream,
-                        nvjpeg2kStream_t stream) */
 typedef nvjpeg2kStatus_t (*PFN_nvjpeg2kStreamParse)(
     nvjpeg2kHandle_t handle,
     const unsigned char *data, size_t length,
     int save_metadata, int save_stream,
     nvjpeg2kStream_t stream);
-
-/* nvjpeg2kStreamGetImageInfo(nvjpeg2kStream_t stream,
-                               nvjpeg2kImageInfo_t *image_info) */
 typedef nvjpeg2kStatus_t (*PFN_nvjpeg2kStreamGetImageInfo)(
     nvjpeg2kStream_t stream, nvjpeg2kImageInfo_t *image_info);
-
-/* nvjpeg2kStreamGetImageComponentInfo(nvjpeg2kStream_t stream,
-                                        nvjpeg2kImageComponentInfo_t *comp_info,
-                                        uint32_t component_id) */
 typedef nvjpeg2kStatus_t (*PFN_nvjpeg2kStreamGetImageComponentInfo)(
     nvjpeg2kStream_t stream,
     nvjpeg2kImageComponentInfo_t *comp_info,
     uint32_t component_id);
-
-/* nvjpeg2kDecodeParamsCreate(nvjpeg2kDecodeParams_t *decode_params) */
-typedef nvjpeg2kStatus_t (*PFN_nvjpeg2kDecodeParamsCreate)(
-    nvjpeg2kDecodeParams_t *decode_params);
-
-/* nvjpeg2kDecodeParamsDestroy(nvjpeg2kDecodeParams_t decode_params) */
-typedef nvjpeg2kStatus_t (*PFN_nvjpeg2kDecodeParamsDestroy)(
-    nvjpeg2kDecodeParams_t decode_params);
-
-/* nvjpeg2kDecode(nvjpeg2kHandle_t handle,
-                   nvjpeg2kDecodeState_t decode_state,
-                   nvjpeg2kStream_t stream,
-                   nvjpeg2kImage_t *destination,
-                   cudaStream_t stream_cuda)
-   Note: last arg is cudaStream_t — we pass NULL (default stream). */
 typedef nvjpeg2kStatus_t (*PFN_nvjpeg2kDecode)(
     nvjpeg2kHandle_t handle,
     nvjpeg2kDecodeState_t decode_state,
     nvjpeg2kStream_t jpeg_stream,
     nvjpeg2kImage_t *destination,
-    void *cuda_stream);  /* cudaStream_t, NULL = default stream */
-
-/* ------------------------------------------------------------------ */
-/* CUDA Driver API types and function pointer typedefs                 */
-/* nvcuda.dll is the driver API — always present with any NVIDIA GPU.  */
-/* ------------------------------------------------------------------ */
+    void *cuda_stream);
+typedef nvjpeg2kStatus_t (*PFN_nvjpeg2kGetProperty)(
+    nvjpeg2kLibraryPropertyType type, int *value);
+typedef nvjpeg2kStatus_t (*PFN_nvjpeg2kStreamGetColorSpace)(
+    nvjpeg2kStream_t stream, nvjpeg2kColorSpace_t *colorspace);
 
 typedef int   CUdevice;
 typedef void *CUcontext;
+typedef void *CUstream;
 
 typedef CUresult (*PFN_cuInit)(unsigned int Flags);
 typedef CUresult (*PFN_cuDeviceGet)(CUdevice *device, int ordinal);
 typedef CUresult (*PFN_cuDevicePrimaryCtxRetain)(CUcontext *pctx, CUdevice dev);
 typedef CUresult (*PFN_cuDevicePrimaryCtxRelease)(CUdevice dev);
+typedef CUresult (*PFN_cuCtxGetCurrent)(CUcontext *pctx);
 typedef CUresult (*PFN_cuCtxSetCurrent)(CUcontext ctx);
 typedef CUresult (*PFN_cuMemAlloc_v2)(CUdeviceptr *dptr, size_t bytesize);
+typedef CUresult (*PFN_cuMemAllocPitch_v2)(CUdeviceptr *dptr, size_t *pPitch,
+                                          size_t WidthInBytes, size_t Height,
+                                          unsigned int ElementSizeBytes);
 typedef CUresult (*PFN_cuMemFree_v2)(CUdeviceptr dptr);
-typedef CUresult (*PFN_cuMemcpyDtoH_v2)(void *dstHost, CUdeviceptr srcDevice, size_t ByteCount);
+typedef CUresult (*PFN_cuMemAllocHost_v2)(void **pp, size_t bytesize);
+typedef CUresult (*PFN_cuMemFreeHost)(void *p);
+typedef CUresult (*PFN_cuMemcpyDtoHAsync_v2)(void *dstHost, CUdeviceptr srcDevice,
+                                            size_t ByteCount, CUstream hStream);
 typedef CUresult (*PFN_cuCtxSynchronize)(void);
 
-/* ------------------------------------------------------------------ */
-/* Loader struct — holds all function pointers                         */
-/* ------------------------------------------------------------------ */
-
 typedef struct NVJPEG2KFunctions {
-    /* nvjpeg2k_0.dll */
     PFN_nvjpeg2kCreateSimple                   CreateSimple;
     PFN_nvjpeg2kDestroy                        Destroy;
     PFN_nvjpeg2kDecodeStateCreate              DecodeStateCreate;
@@ -204,15 +153,20 @@ typedef struct NVJPEG2KFunctions {
     PFN_nvjpeg2kStreamGetImageInfo             StreamGetImageInfo;
     PFN_nvjpeg2kStreamGetImageComponentInfo    StreamGetImageComponentInfo;
     PFN_nvjpeg2kDecode                         Decode;
-    /* nvcuda.dll (driver API) */
+    PFN_nvjpeg2kGetProperty                    GetProperty;
+    PFN_nvjpeg2kStreamGetColorSpace            StreamGetColorSpace;
     PFN_cuInit                                 Init;
     PFN_cuDeviceGet                            DeviceGet;
     PFN_cuDevicePrimaryCtxRetain               PrimaryCtxRetain;
     PFN_cuDevicePrimaryCtxRelease              PrimaryCtxRelease;
+    PFN_cuCtxGetCurrent                        CtxGetCurrent;
     PFN_cuCtxSetCurrent                        CtxSetCurrent;
     PFN_cuMemAlloc_v2                          MemAlloc;
+    PFN_cuMemAllocPitch_v2                     MemAllocPitch;
     PFN_cuMemFree_v2                           MemFree;
-    PFN_cuMemcpyDtoH_v2                        MemcpyDtoH;
+    PFN_cuMemAllocHost_v2                      MemAllocHost;
+    PFN_cuMemFreeHost                          MemFreeHost;
+    PFN_cuMemcpyDtoHAsync_v2                   MemcpyDtoHAsync;
     PFN_cuCtxSynchronize                       CtxSynchronize;
 } NVJPEG2KFunctions;
 
