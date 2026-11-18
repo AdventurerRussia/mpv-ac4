@@ -73,6 +73,9 @@ typedef struct NVJPEG2KContext {
     uint32_t              num_components;
     uint32_t              image_width;
     uint32_t              image_height;
+
+    /* Container pixel format hint at init */
+    enum AVPixelFormat    initial_pix_fmt;
 } NVJPEG2KContext;
 
 static int load_sym(AVCodecContext *avctx, HMODULE dll,
@@ -119,6 +122,8 @@ static av_cold int nvjpeg2k_decode_init(AVCodecContext *avctx)
     NVJPEG2KContext *ctx = avctx->priv_data;
     nvjpeg2kStatus_t st;
     CUresult cr;
+
+    ctx->initial_pix_fmt = avctx->pix_fmt;
 
     /* --- Load nvjpeg2k_0.dll --- */
     ctx->nvjpeg2k_dll = LoadLibraryW(L"nvjpeg2k_0.dll");
@@ -279,6 +284,150 @@ static int ensure_buffers(AVCodecContext *avctx,
     return 0;
 }
 
+static enum AVPixelFormat select_pixel_format(AVCodecContext *avctx,
+                                              NVJPEG2KContext *ctx,
+                                              uint32_t ncomp,
+                                              const nvjpeg2kImageComponentInfo_t comp_info[],
+                                              int *plane_map)
+{
+    uint8_t prec = comp_info[0].precision;
+
+    if (ncomp == 1) {
+        plane_map[0] = 0;
+        if (prec <= 8)  return AV_PIX_FMT_GRAY8;
+        if (prec <= 10) return AV_PIX_FMT_GRAY10LE;
+        if (prec <= 12) return AV_PIX_FMT_GRAY12LE;
+        return AV_PIX_FMT_GRAY16LE;
+    }
+
+    if (ncomp == 4) {
+        uint32_t w0 = comp_info[0].component_width;
+        uint32_t h0 = comp_info[0].component_height;
+        uint32_t w1 = comp_info[1].component_width;
+        uint32_t h1 = comp_info[1].component_height;
+
+        if (w1 < w0 || h1 < h0) {
+            /* YUVA 4:2:0 */
+            plane_map[0] = 0;
+            plane_map[1] = 1;
+            plane_map[2] = 2;
+            plane_map[3] = 3;
+            if (prec <= 8)  return AV_PIX_FMT_YUVA420P;
+            if (prec <= 10) return AV_PIX_FMT_YUVA420P10LE;
+            return AV_PIX_FMT_YUVA420P16LE;
+        } else {
+            /* GBRAP (RGBA) */
+            plane_map[0] = 2; /* R -> plane 2 */
+            plane_map[1] = 0; /* G -> plane 0 */
+            plane_map[2] = 1; /* B -> plane 1 */
+            plane_map[3] = 3; /* A -> plane 3 */
+            if (prec <= 8)  return AV_PIX_FMT_GBRAP;
+            if (prec <= 10) return AV_PIX_FMT_GBRAP10LE;
+            if (prec <= 12) return AV_PIX_FMT_GBRAP12LE;
+            return AV_PIX_FMT_GBRAP16LE;
+        }
+    }
+
+    if (ncomp == 3) {
+        uint32_t w0 = comp_info[0].component_width;
+        uint32_t h0 = comp_info[0].component_height;
+        uint32_t w1 = comp_info[1].component_width;
+        uint32_t h1 = comp_info[1].component_height;
+        uint32_t w2 = comp_info[2].component_width;
+        uint32_t h2 = comp_info[2].component_height;
+
+        /* DCI XYZ Check */
+        if (prec == 12 && w0 == w1 && h0 == h1 &&
+            (avctx->color_primaries == AVCOL_PRI_SMPTE428 ||
+             avctx->pix_fmt == AV_PIX_FMT_XYZ12LE)) {
+            plane_map[0] = 0;
+            plane_map[1] = 1;
+            plane_map[2] = 2;
+            return AV_PIX_FMT_XYZ12LE;
+        }
+
+        /* Subsampled Chroma: YUV planar */
+        if (w1 < w0 || h1 < h0 || w2 < w0 || h2 < h0) {
+            plane_map[0] = 0; /* Y -> plane 0 */
+            plane_map[1] = 1; /* U -> plane 1 */
+            plane_map[2] = 2; /* V -> plane 2 */
+
+            if (w1 == (w0 + 1) / 2 && h1 == (h0 + 1) / 2) {
+                /* 4:2:0 */
+                if (prec <= 8)  return AV_PIX_FMT_YUV420P;
+                if (prec <= 10) return AV_PIX_FMT_YUV420P10LE;
+                if (prec <= 12) return AV_PIX_FMT_YUV420P12LE;
+                return AV_PIX_FMT_YUV420P16LE;
+            } else if (w1 == (w0 + 1) / 2 && h1 == h0) {
+                /* 4:2:2 */
+                if (prec <= 8)  return AV_PIX_FMT_YUV422P;
+                if (prec <= 10) return AV_PIX_FMT_YUV422P10LE;
+                if (prec <= 12) return AV_PIX_FMT_YUV422P12LE;
+                return AV_PIX_FMT_YUV422P16LE;
+            } else if (w1 == w0 && h1 == (h0 + 1) / 2) {
+                /* 4:4:0 */
+                if (prec <= 8)  return AV_PIX_FMT_YUV440P;
+                if (prec <= 10) return AV_PIX_FMT_YUV440P10LE;
+                return AV_PIX_FMT_YUV440P12LE;
+            } else {
+                /* Default subsampled fallback to 4:2:0 */
+                if (prec <= 8)  return AV_PIX_FMT_YUV420P;
+                if (prec <= 10) return AV_PIX_FMT_YUV420P10LE;
+                if (prec <= 12) return AV_PIX_FMT_YUV420P12LE;
+                return AV_PIX_FMT_YUV420P16LE;
+            }
+        }
+
+        /* 3 components, 1:1:1: Check YUV 4:4:4 vs RGB */
+        int is_yuv444 = 0;
+        if (avctx->colorspace == AVCOL_SPC_BT709 ||
+            avctx->colorspace == AVCOL_SPC_BT470BG ||
+            avctx->colorspace == AVCOL_SPC_SMPTE170M ||
+            avctx->colorspace == AVCOL_SPC_SMPTE240M ||
+            avctx->colorspace == AVCOL_SPC_BT2020_NCL ||
+            avctx->colorspace == AVCOL_SPC_BT2020_CL) {
+            is_yuv444 = 1;
+        } else if (avctx->color_range == AVCOL_RANGE_MPEG) {
+            is_yuv444 = 1;
+        } else if (ctx && (ctx->initial_pix_fmt == AV_PIX_FMT_YUV444P ||
+                           ctx->initial_pix_fmt == AV_PIX_FMT_YUV444P10LE ||
+                           ctx->initial_pix_fmt == AV_PIX_FMT_YUV444P12LE ||
+                           ctx->initial_pix_fmt == AV_PIX_FMT_YUV444P16LE)) {
+            is_yuv444 = 1;
+        } else if (avctx->pix_fmt == AV_PIX_FMT_YUV444P ||
+                   avctx->pix_fmt == AV_PIX_FMT_YUV444P10LE ||
+                   avctx->pix_fmt == AV_PIX_FMT_YUV444P12LE ||
+                   avctx->pix_fmt == AV_PIX_FMT_YUV444P16LE) {
+            is_yuv444 = 1;
+        }
+
+        if (is_yuv444) {
+            plane_map[0] = 0;
+            plane_map[1] = 1;
+            plane_map[2] = 2;
+            if (prec <= 8)  return AV_PIX_FMT_YUV444P;
+            if (prec <= 10) return AV_PIX_FMT_YUV444P10LE;
+            if (prec <= 12) return AV_PIX_FMT_YUV444P12LE;
+            return AV_PIX_FMT_YUV444P16LE;
+        }
+
+        /* Standard RGB planar (GBRP) */
+        plane_map[0] = 2; /* R -> plane 2 */
+        plane_map[1] = 0; /* G -> plane 0 */
+        plane_map[2] = 1; /* B -> plane 1 */
+        if (prec <= 8)  return AV_PIX_FMT_GBRP;
+        if (prec <= 10) return AV_PIX_FMT_GBRP10LE;
+        if (prec <= 12) return AV_PIX_FMT_GBRP12LE;
+        return AV_PIX_FMT_GBRP16LE;
+    }
+
+    /* Fallback */
+    plane_map[0] = 2;
+    plane_map[1] = 0;
+    plane_map[2] = 1;
+    return AV_PIX_FMT_GBRP;
+}
+
 static int nvjpeg2k_decode_frame(AVCodecContext *avctx, AVFrame *frame,
                                  int *got_frame, AVPacket *avpkt)
 {
@@ -329,23 +478,9 @@ static int nvjpeg2k_decode_frame(AVCodecContext *avctx, AVFrame *frame,
         }
     }
 
-    /* --- 3. Determine pixel format --- */
-    enum AVPixelFormat pix_fmt;
-    if (ncomp == 3) {
-        if (comp_info[0].precision == 12 &&
-            comp_info[1].precision == 12 &&
-            comp_info[2].precision == 12 &&
-            avctx->color_primaries == AVCOL_PRI_SMPTE428) {
-            pix_fmt = AV_PIX_FMT_XYZ12LE;
-        } else {
-            pix_fmt = AV_PIX_FMT_GBRP16LE;
-        }
-    } else if (ncomp == 1) {
-        pix_fmt = AV_PIX_FMT_GRAY16LE;
-    } else {
-        pix_fmt = AV_PIX_FMT_GBRP16LE;
-        ncomp   = 3;
-    }
+    /* --- 3. Determine pixel format & component plane mapping --- */
+    int plane_map[MAX_COMPONENTS] = {0, 1, 2, 3};
+    enum AVPixelFormat pix_fmt = select_pixel_format(avctx, ctx, ncomp, comp_info, plane_map);
 
     /* --- 4. Allocate GPU VRAM buffers & CPU staging buffers --- */
     ret = ensure_buffers(avctx, ctx, &img_info, comp_info, ncomp);
@@ -421,30 +556,12 @@ static int nvjpeg2k_decode_frame(AVCodecContext *avctx, AVFrame *frame,
         frame->color_primaries = AVCOL_PRI_SMPTE428;
         frame->color_trc       = AVCOL_TRC_SMPTE428;
         frame->colorspace      = AVCOL_SPC_RGB;
-
-    } else if (pix_fmt == AV_PIX_FMT_GRAY16LE) {
-        uint32_t W = comp_info[0].component_width;
-        uint32_t H = comp_info[0].component_height;
-        uint8_t *dst = frame->data[0];
-        int dstride  = frame->linesize[0];
-        const uint16_t *src = (const uint16_t *)ctx->host_buf[0];
-        size_t spitch = ctx->dev_pitch[0] / 2;
-        int shift = 16 - (int)comp_info[0].precision;
-
-        for (uint32_t y = 0; y < H; y++) {
-            uint16_t *d = (uint16_t *)(dst + (size_t)y * dstride);
-            const uint16_t *s = src + (size_t)y * spitch;
-            for (uint32_t x = 0; x < W; x++)
-                d[x] = (uint16_t)(s[x] << shift);
-        }
     } else {
-        /*
-         * AV_PIX_FMT_GBRP16LE: plane[0]=G, plane[1]=B, plane[2]=R.
-         * nvjpeg2k component 0=R, 1=G, 2=B.
-         * Mapping: comp 0 (R) -> plane 2; comp 1 (G) -> plane 0; comp 2 (B) -> plane 1.
-         */
-        int plane_map[3] = {2, 0, 1};
-        for (uint32_t c = 0; c < ncomp && c < 3; c++) {
+        const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(pix_fmt);
+        int bytes_per_sample = (desc && desc->comp[0].depth > 8) ? 2 : 1;
+        int target_depth     = desc ? desc->comp[0].depth : 8;
+
+        for (uint32_t c = 0; c < ncomp && c < MAX_COMPONENTS; c++) {
             int p = plane_map[c];
             uint32_t W = comp_info[c].component_width;
             uint32_t H = comp_info[c].component_height;
@@ -452,18 +569,59 @@ static int nvjpeg2k_decode_frame(AVCodecContext *avctx, AVFrame *frame,
             int dstride  = frame->linesize[p];
             const uint16_t *src = (const uint16_t *)ctx->host_buf[c];
             size_t spitch = ctx->dev_pitch[c] / 2;
-            int shift = 16 - (int)comp_info[c].precision;
+            int src_prec  = (int)comp_info[c].precision;
+            int shift     = target_depth - src_prec;
 
-            for (uint32_t y = 0; y < H; y++) {
-                uint16_t *d = (uint16_t *)(dst + (size_t)y * dstride);
-                const uint16_t *s = src + (size_t)y * spitch;
-                for (uint32_t x = 0; x < W; x++)
-                    d[x] = (uint16_t)(s[x] << shift);
+            if (bytes_per_sample == 1) {
+                if (shift < 0) {
+                    int rshift = -shift;
+                    for (uint32_t y = 0; y < H; y++) {
+                        uint8_t *d = dst + (size_t)y * dstride;
+                        const uint16_t *s = src + (size_t)y * spitch;
+                        for (uint32_t x = 0; x < W; x++)
+                            d[x] = (uint8_t)(s[x] >> rshift);
+                    }
+                } else {
+                    for (uint32_t y = 0; y < H; y++) {
+                        uint8_t *d = dst + (size_t)y * dstride;
+                        const uint16_t *s = src + (size_t)y * spitch;
+                        for (uint32_t x = 0; x < W; x++)
+                            d[x] = (uint8_t)s[x];
+                    }
+                }
+            } else {
+                if (shift > 0) {
+                    for (uint32_t y = 0; y < H; y++) {
+                        uint16_t *d = (uint16_t *)(dst + (size_t)y * dstride);
+                        const uint16_t *s = src + (size_t)y * spitch;
+                        for (uint32_t x = 0; x < W; x++)
+                            d[x] = (uint16_t)(s[x] << shift);
+                    }
+                } else if (shift < 0) {
+                    int rshift = -shift;
+                    for (uint32_t y = 0; y < H; y++) {
+                        uint16_t *d = (uint16_t *)(dst + (size_t)y * dstride);
+                        const uint16_t *s = src + (size_t)y * spitch;
+                        for (uint32_t x = 0; x < W; x++)
+                            d[x] = (uint16_t)(s[x] >> rshift);
+                    }
+                } else {
+                    for (uint32_t y = 0; y < H; y++) {
+                        uint16_t *d = (uint16_t *)(dst + (size_t)y * dstride);
+                        const uint16_t *s = src + (size_t)y * spitch;
+                        for (uint32_t x = 0; x < W; x++)
+                            d[x] = s[x];
+                    }
+                }
             }
         }
-        frame->color_primaries = AVCOL_PRI_UNSPECIFIED;
-        frame->color_trc       = AVCOL_TRC_UNSPECIFIED;
-        frame->colorspace      = AVCOL_SPC_UNSPECIFIED;
+
+        if (desc && (desc->flags & AV_PIX_FMT_FLAG_RGB)) {
+            frame->color_primaries = avctx->color_primaries;
+            frame->color_trc       = avctx->color_trc;
+            frame->colorspace      = AVCOL_SPC_RGB;
+            frame->color_range     = AVCOL_RANGE_JPEG;
+        }
     }
 
     frame->flags |= AV_FRAME_FLAG_KEY;
@@ -511,7 +669,35 @@ static av_cold int nvjpeg2k_decode_close(AVCodecContext *avctx)
 
 static const enum AVPixelFormat nvjpeg2k_pix_fmts[] = {
     AV_PIX_FMT_XYZ12LE,
+    AV_PIX_FMT_GBRP,
+    AV_PIX_FMT_GBRP10LE,
+    AV_PIX_FMT_GBRP12LE,
     AV_PIX_FMT_GBRP16LE,
+    AV_PIX_FMT_GBRAP,
+    AV_PIX_FMT_GBRAP10LE,
+    AV_PIX_FMT_GBRAP12LE,
+    AV_PIX_FMT_GBRAP16LE,
+    AV_PIX_FMT_YUV420P,
+    AV_PIX_FMT_YUV420P10LE,
+    AV_PIX_FMT_YUV420P12LE,
+    AV_PIX_FMT_YUV420P16LE,
+    AV_PIX_FMT_YUVA420P,
+    AV_PIX_FMT_YUVA420P10LE,
+    AV_PIX_FMT_YUVA420P16LE,
+    AV_PIX_FMT_YUV422P,
+    AV_PIX_FMT_YUV422P10LE,
+    AV_PIX_FMT_YUV422P12LE,
+    AV_PIX_FMT_YUV422P16LE,
+    AV_PIX_FMT_YUV440P,
+    AV_PIX_FMT_YUV440P10LE,
+    AV_PIX_FMT_YUV440P12LE,
+    AV_PIX_FMT_YUV444P,
+    AV_PIX_FMT_YUV444P10LE,
+    AV_PIX_FMT_YUV444P12LE,
+    AV_PIX_FMT_YUV444P16LE,
+    AV_PIX_FMT_GRAY8,
+    AV_PIX_FMT_GRAY10LE,
+    AV_PIX_FMT_GRAY12LE,
     AV_PIX_FMT_GRAY16LE,
     AV_PIX_FMT_NONE
 };
