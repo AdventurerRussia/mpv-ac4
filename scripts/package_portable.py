@@ -70,6 +70,7 @@ if os.path.exists(OLD_PORTABLE):
 # ── Шаг 1: очистить OUTPUT_DIR, сохраняя portable_config и пользовательские скрипты
 print(f"=== Step 1: Preparing output dir: {OUTPUT_DIR} ===")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+subprocess.run(["attrib", "-h", "-r", os.path.join(OUTPUT_DIR, "*")], capture_output=True)
 
 KEEP_DIRS  = {"mpv", "fonts", "scripts", "script-opts", "installer", "doc", "shaders"}
 KEEP_FILES = {"yt-dlp.exe", "mpv-icon.ico", "mpv-document.ico", "nvjpeg2k_0.dll"}
