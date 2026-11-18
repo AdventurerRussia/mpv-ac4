@@ -72,7 +72,7 @@ print(f"=== Step 1: Preparing output dir: {OUTPUT_DIR} ===")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 KEEP_DIRS  = {"mpv", "fonts", "scripts", "script-opts", "installer", "doc", "shaders"}
-KEEP_FILES = {"yt-dlp.exe", "mpv-icon.ico", "mpv-document.ico"}
+KEEP_FILES = {"yt-dlp.exe", "mpv-icon.ico", "mpv-document.ico", "nvjpeg2k_0.dll"}
 
 for entry in os.listdir(OUTPUT_DIR):
     full = os.path.join(OUTPUT_DIR, entry)

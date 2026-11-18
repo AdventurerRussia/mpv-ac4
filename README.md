@@ -4,10 +4,11 @@
 [![mpv version](https://img.shields.io/badge/mpv-v0.42.0--dev%20(bb4823e)-orange?style=flat-square)](https://github.com/mpv-player/mpv)
 [![FFmpeg](https://img.shields.io/badge/FFmpeg-9.0.2%20("Lei")-red?style=flat-square)](https://github.com/FFmpeg/FFmpeg/tree/release/9.0)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64-informational?style=flat-square)](https://github.com/AdventurerRussia/mpv-ac4/releases/latest)
-[![Codec](https://img.shields.io/badge/audio-Dolby%20AC--4%20(ETSI%20TS%20103%20190)-success?style=flat-square)](https://www.etsi.org/deliver/etsi_ts/103100_103199/10319001/01.03.01_60/ts_10319001v010301p.pdf)
+[![Audio](https://img.shields.io/badge/audio-Dolby%20AC--4%20(ETSI%20TS%20103%20190)-success?style=flat-square)](https://www.etsi.org/deliver/etsi_ts/103100_103199/10319001/01.03.01_60/ts_10319001v010301p.pdf)
+[![Video](https://img.shields.io/badge/video-JPEG%202000%20(NVIDIA%20nvJPEG2000)-76B900?style=flat-square&logo=nvidia&logoColor=white)](https://developer.nvidia.com/nvjpeg2000)
 [![License](https://img.shields.io/badge/license-GPLv3-green?style=flat-square)](https://www.gnu.org/licenses/gpl-3.0.html)
 
-A custom Windows x64 build of **[mpv](https://github.com/mpv-player/mpv)** media player (version **v0.42.0-dev**, git commit [`bb4823e`](https://github.com/mpv-player/mpv/commit/bb4823e5f0eb92a830242e60dfdcc50d1f2e0410)) featuring native decoding of **Dolby AC-4** audio streams ([ETSI TS 103 190-1](https://www.etsi.org/deliver/etsi_ts/103100_103199/10319001/01.03.01_60/ts_10319001v010301p.pdf)), including over-the-air digital television broadcasts (**ATSC 3.0 / DVB-T2**).
+A custom Windows x64 build of **[mpv](https://github.com/mpv-player/mpv)** media player (version **v0.42.0-dev**, git commit [`bb4823e`](https://github.com/mpv-player/mpv/commit/bb4823e5f0eb92a830242e60dfdcc50d1f2e0410)) featuring native decoding of **Dolby AC-4** audio streams ([ETSI TS 103 190-1](https://www.etsi.org/deliver/etsi_ts/103100_103199/10319001/01.03.01_60/ts_10319001v010301p.pdf)) and GPU hardware-accelerated **JPEG 2000** video decoding via NVIDIA **nvJPEG2000** (DCP cinema `AV_PIX_FMT_XYZ12LE` and general RGB/Greyscale).
 
 ---
 
@@ -58,6 +59,7 @@ MPV PLAYER AC-4/
 |---|:---:|---|
 | **AC-4 Stereo (2.0)** | ✅ Verified | 48000 Hz, clean audio with perfect A/V sync (`believer.mp4`, `Lady Gaga Bloody Mary`) |
 | **AC-4 Multichannel (5.1)** | ✅ Verified | 6 channels, tested on real ATSC 3.0 broadcast captures (`KDAF.ts`) |
+| **JPEG 2000 GPU (nvJPEG2000)** | ✅ Verified | GPU hardware-accelerated JPEG 2000 decoding on NVIDIA GeForce / RTX GPUs via `nvjpeg2k_0.dll` (`--vd=jpeg2000_nvjpeg`). Supports DCI XYZ 12-bit cinema packages (`AV_PIX_FMT_XYZ12LE`) with tone-mapping in mpv/libplacebo shader pipeline, RGB planar (`AV_PIX_FMT_GBRP16LE`), and Greyscale (`AV_PIX_FMT_GRAY16LE`), with automatic graceful CPU fallback if no NVIDIA GPU is detected. |
 | **MP4 / MOV Containers** | ✅ Supported | Standard MP4/ISOBMFF containers containing AC-4 tracks |
 | **MPEG-TS Containers** | ✅ Supported | Digital television broadcast captures (ATSC 3.0, DVB-T2) |
 | **Multi-Language Audio Tracks** | ✅ Supported | Switching between presentations/substreams with `#` (`--aid=1`, `--aid=2`) |
@@ -76,6 +78,8 @@ MPV PLAYER AC-4/
    Adapted to the modern internal parser API of FFmpeg 9.0 (`parser_internal.h`, `const FFCodecParser ff_ac4_parser`, and `PARSER_CODEC_LIST(AV_CODEC_ID_AC4)`). For FFmpeg 7.1, an `AVCodecParser` public structure is used.
 4. **Build System Registration**:
    `ff_ac4_decoder` and `ff_ac4_parser` are registered in `allcodecs.c`, `parsers.c`, and `libavcodec/Makefile`.
+5. **`libavcodec/nvjpeg2kdec.c` & `nvjpeg2k_loader.h`**:
+   Native GPU-accelerated JPEG 2000 video decoder (`--vd=jpeg2000_nvjpeg`) using NVIDIA's **nvJPEG2000** library. Implemented with dynamic loading (`LoadLibraryW` on `nvjpeg2k_0.dll` and CUDA driver `nvcuda.dll`), eliminating compile-time CUDA Toolkit dependencies. Decodes directly into pinned host memory (`cuMemAllocHost`), outputting `AV_PIX_FMT_XYZ12LE` (DCI cinema packages) or `AV_PIX_FMT_GBRP16LE`/`AV_PIX_FMT_GRAY16LE` with graceful fallback to software decoding if no NVIDIA GPU is present.
 
 ---
 
