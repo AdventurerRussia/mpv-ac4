@@ -1,16 +1,8 @@
 diff --git a/libavcodec/Makefile b/libavcodec/Makefile
-index 95ba308..30a7b0e 100644
+index 95ba308..b69ca90 100644
 --- a/libavcodec/Makefile
 +++ b/libavcodec/Makefile
-@@ -215,6 +215,7 @@ OBJS-$(CONFIG_AC3_DECODER)             += ac3dec_float.o ac3dec_data.o ac3.o \
-                                           kbdwin.o ac3tab.o ac3_channel_layout_tab.o
- OBJS-$(CONFIG_AC3_FIXED_DECODER)       += ac3dec_fixed.o ac3dec_data.o ac3.o \
-                                           kbdwin.o ac3tab.o ac3_channel_layout_tab.o
-+OBJS-$(CONFIG_AC4_DECODER)             += ac4dec.o kbdwin.o
- OBJS-$(CONFIG_AC3_ENCODER)             += ac3enc_float.o ac3enc.o ac3tab.o \
-                                           ac3.o kbdwin.o
- OBJS-$(CONFIG_AC3_FIXED_ENCODER)       += ac3enc_fixed.o ac3enc.o ac3tab.o ac3.o kbdwin.o
-@@ -510,6 +511,7 @@ OBJS-$(CONFIG_JPEG2000_ENCODER)        += j2kenc.o mqcenc.o mqc.o jpeg2000.o \
+@@ -510,6 +510,7 @@ OBJS-$(CONFIG_JPEG2000_ENCODER)        += j2kenc.o mqcenc.o mqc.o jpeg2000.o \
                                            jpeg2000dwt.o
  OBJS-$(CONFIG_JPEG2000_DECODER)        += jpeg2000dec.o jpeg2000.o jpeg2000dsp.o \
                                            jpeg2000dwt.o mqcdec.o mqc.o jpeg2000htdec.o
@@ -18,16 +10,8 @@ index 95ba308..30a7b0e 100644
  OBJS-$(CONFIG_JPEGLS_DECODER)          += jpeglsdec.o jpegls.o
  OBJS-$(CONFIG_JPEGLS_ENCODER)          += jpeglsenc.o jpegls.o
  OBJS-$(CONFIG_JV_DECODER)              += jvdec.o
-@@ -1236,6 +1238,7 @@ OBJS-$(CONFIG_AAC_LATM_PARSER)         += latm_parser.o
- OBJS-$(CONFIG_AAC_PARSER)              += aac_parser.o aac_ac3_parser.o
- OBJS-$(CONFIG_AC3_PARSER)              += aac_ac3_parser.o ac3tab.o \
-                                           ac3_channel_layout_tab.o
-+OBJS-$(CONFIG_AC4_PARSER)              += ac4_parser.o
- OBJS-$(CONFIG_ADX_PARSER)              += adx_parser.o
- OBJS-$(CONFIG_AHX_PARSER)              += ahx_parser.o
- OBJS-$(CONFIG_AMR_PARSER)              += amr_parser.o
 diff --git a/libavcodec/allcodecs.c b/libavcodec/allcodecs.c
-index 47eded2..01a747c 100644
+index 47eded2..d127c59 100644
 --- a/libavcodec/allcodecs.c
 +++ b/libavcodec/allcodecs.c
 @@ -179,6 +179,7 @@ extern const FFCodec ff_indeo5_decoder;
@@ -38,14 +22,6 @@ index 47eded2..01a747c 100644
  extern const FFCodec ff_jpeg2000_decoder;
  extern const FFCodec ff_jpegls_encoder;
  extern const FFCodec ff_jpegls_decoder;
-@@ -428,6 +429,7 @@ extern const FFCodec ff_ac3_encoder;
- extern const FFCodec ff_ac3_decoder;
- extern const FFCodec ff_ac3_fixed_encoder;
- extern const FFCodec ff_ac3_fixed_decoder;
-+extern const FFCodec ff_ac4_decoder;
- extern const FFCodec ff_acelp_kelvin_decoder;
- extern const FFCodec ff_ahx_decoder;
- extern const FFCodec ff_alac_encoder;
 diff --git a/libavcodec/nvjpeg2k_loader.h b/libavcodec/nvjpeg2k_loader.h
 new file mode 100644
 index 0000000..cfd6520

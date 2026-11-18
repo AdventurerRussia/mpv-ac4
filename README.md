@@ -96,11 +96,16 @@ pacman -S --needed --noconfirm git base-devel mingw-w64-ucrt-x86_64-toolchain \
     mingw-w64-ucrt-x86_64-libplacebo
 ```
 
-### 2. Clone FFmpeg and Apply Patch (9.0.2)
+### 2. Clone FFmpeg and Apply Patches (9.0.2)
 ```bash
 git clone --depth 1 -b n9.0.2 https://github.com/FFmpeg/FFmpeg.git ffmpeg
 cd ffmpeg
+
+# 1. Dolby AC-4 audio decoder & parser
 git apply ../patches/ffmpeg-9.0.2-ac4.patch
+
+# 2. NVIDIA nvJPEG2000 GPU video decoder (optional, can be used together or standalone)
+git apply ../patches/ffmpeg-9.0.2-nvjpeg2k.patch
 
 ./configure \
     --prefix=/install \
