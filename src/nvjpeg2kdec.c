@@ -1,7 +1,7 @@
 /*
  * JPEG 2000 decoder using NVIDIA nvJPEG2000 GPU library (dynamic loading)
  *
- * Copyright (c) 2024 mpv AC-4 Edition contributors
+ * Copyright (c) 2024-2026 mpv AC-4 Edition contributors
  *
  * This file is part of FFmpeg.
  *
@@ -18,33 +18,6 @@
  * You should have received a copy of the GNU Lesser General Public
  * License along with FFmpeg; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
- *
- * ---------------------------------------------------------------------------
- * Overview
- * ---------------------------------------------------------------------------
- * This decoder dynamically loads nvjpeg2k_0.dll (nvJPEG2000 library from
- * NVIDIA) and nvcuda.dll (CUDA Driver API, always present with any NVIDIA
- * driver) to accelerate JPEG 2000 decoding on NVIDIA GPUs.
- *
- * If either DLL is unavailable (no NVIDIA GPU, no driver, DLL not on PATH),
- * init() returns AVERROR_DECODER_NOT_FOUND and FFmpeg falls back to the
- * software JPEG 2000 decoder automatically.
- *
- * Color space handling:
- *   - DCI JPEG 2000 content is encoded in XYZ colour space (12-bit/component).
- *   - We output AV_PIX_FMT_XYZ12LE so that mpv / libplacebo handles the
- *     XYZ → display colour-space transformation in its shader pipeline.
- *   - For non-DCI content (RGB/YUV), we output AV_PIX_FMT_GBRP16LE (planar).
- *
- * Data flow:
- *   compressed J2K packet → nvjpeg2kStreamParse (CPU)
- *   → nvjpeg2kDecode (GPU, writes planar UINT16 to pinned host memory)
- *   → CPU repack loop → AVFrame
- *
- * Pinned host memory (cuMemAllocHost) is used so that nvjpeg2kDecode can
- * write directly to host-accessible buffers without a separate cudaMemcpy.
- * This relies on the CUDA unified virtual address space (available on all
- * CUDA-capable GPUs since Fermi).
  */
 
 #include "config.h"
@@ -64,10 +37,6 @@
 #include "decode.h"
 #include "nvjpeg2k_loader.h"
 
-/* ------------------------------------------------------------------ */
-/* Decoder private context                                             */
-/* ------------------------------------------------------------------ */
-
 #define MAX_COMPONENTS 4
 
 typedef struct NVJPEG2KContext {
@@ -77,30 +46,34 @@ typedef struct NVJPEG2KContext {
     HMODULE               nvjpeg2k_dll;
     HMODULE               nvcuda_dll;
 
-    /* nvJPEG2000 function pointers */
+    /* Function pointers */
     NVJPEG2KFunctions     fn;
+
+    /* CUDA context & device */
+    CUdevice              cuda_dev;
+    CUcontext             cuda_ctx;
 
     /* nvJPEG2000 state */
     nvjpeg2kHandle_t      handle;
     nvjpeg2kDecodeState_t decode_state;
     nvjpeg2kStream_t      jpeg_stream;
 
-    /* Pinned host buffers for each component (reused across frames) */
+    /* Device GPU VRAM buffers for each component */
+    CUdeviceptr           dev_buf[MAX_COMPONENTS];
+    size_t                dev_buf_size[MAX_COMPONENTS];
+    size_t                dev_pitch[MAX_COMPONENTS];
+
+    /* Host staging buffers for CPU packing */
     void                 *host_buf[MAX_COMPONENTS];
-    size_t                host_pitch[MAX_COMPONENTS];   /* bytes per row */
-    size_t                host_buf_size[MAX_COMPONENTS];/* total bytes   */
-    uint32_t              buf_width[MAX_COMPONENTS];
-    uint32_t              buf_height[MAX_COMPONENTS];
+    size_t                host_buf_size[MAX_COMPONENTS];
 
     /* Last decoded image geometry */
+    uint32_t              buf_width[MAX_COMPONENTS];
+    uint32_t              buf_height[MAX_COMPONENTS];
     uint32_t              num_components;
     uint32_t              image_width;
     uint32_t              image_height;
 } NVJPEG2KContext;
-
-/* ------------------------------------------------------------------ */
-/* Helpers: load a single function pointer from a DLL                  */
-/* ------------------------------------------------------------------ */
 
 static int load_sym(AVCodecContext *avctx, HMODULE dll,
                     const char *dll_name, const char *fn_name,
@@ -122,37 +95,36 @@ static int load_sym(AVCodecContext *avctx, HMODULE dll,
         ctx->fn.field = (void *)_p; \
     } while (0)
 
-/* ------------------------------------------------------------------ */
-/* Free pinned host buffers                                            */
-/* ------------------------------------------------------------------ */
-
-static void free_host_buffers(NVJPEG2KContext *ctx)
+static void free_buffers(NVJPEG2KContext *ctx)
 {
+    if (ctx->cuda_ctx && ctx->fn.CtxSetCurrent)
+        ctx->fn.CtxSetCurrent(ctx->cuda_ctx);
+
     for (int i = 0; i < MAX_COMPONENTS; i++) {
+        if (ctx->dev_buf[i]) {
+            if (ctx->fn.MemFree)
+                ctx->fn.MemFree(ctx->dev_buf[i]);
+            ctx->dev_buf[i] = 0;
+            ctx->dev_buf_size[i] = 0;
+        }
         if (ctx->host_buf[i]) {
-            if (ctx->fn.MemFreeHost)
-                ctx->fn.MemFreeHost(ctx->host_buf[i]);
-            ctx->host_buf[i]      = NULL;
+            av_freep(&ctx->host_buf[i]);
             ctx->host_buf_size[i] = 0;
         }
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* init / open                                                         */
-/* ------------------------------------------------------------------ */
-
 static av_cold int nvjpeg2k_decode_init(AVCodecContext *avctx)
 {
     NVJPEG2KContext *ctx = avctx->priv_data;
     nvjpeg2kStatus_t st;
+    CUresult cr;
 
     /* --- Load nvjpeg2k_0.dll --- */
     ctx->nvjpeg2k_dll = LoadLibraryW(L"nvjpeg2k_0.dll");
     if (!ctx->nvjpeg2k_dll) {
         av_log(avctx, AV_LOG_INFO,
-               "nvjpeg2k: nvjpeg2k_0.dll not found — "
-               "falling back to software decoder\n");
+               "nvjpeg2k: nvjpeg2k_0.dll not found — falling back to software decoder\n");
         return AVERROR_DECODER_NOT_FOUND;
     }
 
@@ -160,14 +132,13 @@ static av_cold int nvjpeg2k_decode_init(AVCodecContext *avctx)
     ctx->nvcuda_dll = LoadLibraryW(L"nvcuda.dll");
     if (!ctx->nvcuda_dll) {
         av_log(avctx, AV_LOG_INFO,
-               "nvjpeg2k: nvcuda.dll not found — "
-               "falling back to software decoder\n");
+               "nvjpeg2k: nvcuda.dll not found — falling back to software decoder\n");
         FreeLibrary(ctx->nvjpeg2k_dll);
         ctx->nvjpeg2k_dll = NULL;
         return AVERROR_DECODER_NOT_FOUND;
     }
 
-    /* --- Resolve nvJPEG2000 symbols --- */
+    /* Resolve nvJPEG2000 symbols */
     LOAD_SYM(ctx->nvjpeg2k_dll, "nvjpeg2k_0.dll", CreateSimple,
              "nvjpeg2kCreateSimple");
     LOAD_SYM(ctx->nvjpeg2k_dll, "nvjpeg2k_0.dll", Destroy,
@@ -189,29 +160,61 @@ static av_cold int nvjpeg2k_decode_init(AVCodecContext *avctx)
     LOAD_SYM(ctx->nvjpeg2k_dll, "nvjpeg2k_0.dll", Decode,
              "nvjpeg2kDecode");
 
-    /* --- Resolve CUDA Driver API symbols --- */
-    /* cuMemAllocHost_v2 is the versioned alias always available */
-    LOAD_SYM(ctx->nvcuda_dll, "nvcuda.dll", MemAllocHost,
-             "cuMemAllocHost_v2");
-    LOAD_SYM(ctx->nvcuda_dll, "nvcuda.dll", MemFreeHost,
-             "cuMemFreeHost");
-    LOAD_SYM(ctx->nvcuda_dll, "nvcuda.dll", Memcpy2D,
-             "cuMemcpy2D_v2");
+    /* Resolve CUDA Driver API symbols */
+    LOAD_SYM(ctx->nvcuda_dll, "nvcuda.dll", Init,
+             "cuInit");
+    LOAD_SYM(ctx->nvcuda_dll, "nvcuda.dll", DeviceGet,
+             "cuDeviceGet");
+    LOAD_SYM(ctx->nvcuda_dll, "nvcuda.dll", PrimaryCtxRetain,
+             "cuDevicePrimaryCtxRetain");
+    LOAD_SYM(ctx->nvcuda_dll, "nvcuda.dll", PrimaryCtxRelease,
+             "cuDevicePrimaryCtxRelease_v2");
+    LOAD_SYM(ctx->nvcuda_dll, "nvcuda.dll", CtxSetCurrent,
+             "cuCtxSetCurrent");
+    LOAD_SYM(ctx->nvcuda_dll, "nvcuda.dll", MemAlloc,
+             "cuMemAlloc_v2");
+    LOAD_SYM(ctx->nvcuda_dll, "nvcuda.dll", MemFree,
+             "cuMemFree_v2");
+    LOAD_SYM(ctx->nvcuda_dll, "nvcuda.dll", MemcpyDtoH,
+             "cuMemcpyDtoH_v2");
     LOAD_SYM(ctx->nvcuda_dll, "nvcuda.dll", CtxSynchronize,
              "cuCtxSynchronize");
 
-    /* --- Initialise nvJPEG2000 library handle --- */
+    /* Initialise CUDA Driver & Context */
+    cr = ctx->fn.Init(0);
+    if (cr != CUDA_SUCCESS) {
+        av_log(avctx, AV_LOG_ERROR, "nvjpeg2k: cuInit failed (%d)\n", (int)cr);
+        return AVERROR_EXTERNAL;
+    }
+
+    cr = ctx->fn.DeviceGet(&ctx->cuda_dev, 0);
+    if (cr != CUDA_SUCCESS) {
+        av_log(avctx, AV_LOG_ERROR, "nvjpeg2k: cuDeviceGet failed (%d)\n", (int)cr);
+        return AVERROR_EXTERNAL;
+    }
+
+    cr = ctx->fn.PrimaryCtxRetain(&ctx->cuda_ctx, ctx->cuda_dev);
+    if (cr != CUDA_SUCCESS || !ctx->cuda_ctx) {
+        av_log(avctx, AV_LOG_ERROR, "nvjpeg2k: cuDevicePrimaryCtxRetain failed (%d)\n", (int)cr);
+        return AVERROR_EXTERNAL;
+    }
+
+    cr = ctx->fn.CtxSetCurrent(ctx->cuda_ctx);
+    if (cr != CUDA_SUCCESS) {
+        av_log(avctx, AV_LOG_ERROR, "nvjpeg2k: cuCtxSetCurrent failed (%d)\n", (int)cr);
+        return AVERROR_EXTERNAL;
+    }
+
+    /* Initialise nvJPEG2000 handles */
     st = ctx->fn.CreateSimple(&ctx->handle);
     if (st != NVJPEG2K_STATUS_SUCCESS) {
-        av_log(avctx, AV_LOG_ERROR,
-               "nvjpeg2k: nvjpeg2kCreateSimple failed (%d)\n", (int)st);
+        av_log(avctx, AV_LOG_ERROR, "nvjpeg2k: CreateSimple failed (%d)\n", (int)st);
         return AVERROR_EXTERNAL;
     }
 
     st = ctx->fn.DecodeStateCreate(ctx->handle, &ctx->decode_state);
     if (st != NVJPEG2K_STATUS_SUCCESS) {
-        av_log(avctx, AV_LOG_ERROR,
-               "nvjpeg2k: nvjpeg2kDecodeStateCreate failed (%d)\n", (int)st);
+        av_log(avctx, AV_LOG_ERROR, "nvjpeg2k: DecodeStateCreate failed (%d)\n", (int)st);
         ctx->fn.Destroy(ctx->handle);
         ctx->handle = NULL;
         return AVERROR_EXTERNAL;
@@ -219,8 +222,7 @@ static av_cold int nvjpeg2k_decode_init(AVCodecContext *avctx)
 
     st = ctx->fn.StreamCreate(&ctx->jpeg_stream);
     if (st != NVJPEG2K_STATUS_SUCCESS) {
-        av_log(avctx, AV_LOG_ERROR,
-               "nvjpeg2k: nvjpeg2kStreamCreate failed (%d)\n", (int)st);
+        av_log(avctx, AV_LOG_ERROR, "nvjpeg2k: StreamCreate failed (%d)\n", (int)st);
         ctx->fn.DecodeStateDestroy(ctx->decode_state);
         ctx->fn.Destroy(ctx->handle);
         ctx->handle = NULL;
@@ -228,56 +230,57 @@ static av_cold int nvjpeg2k_decode_init(AVCodecContext *avctx)
     }
 
     av_log(avctx, AV_LOG_INFO,
-           "nvjpeg2k: GPU JPEG 2000 decoder initialised successfully\n");
+           "nvjpeg2k: GPU JPEG 2000 decoder initialised successfully on NVIDIA device %d\n",
+           ctx->cuda_dev);
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* Ensure pinned host buffers are large enough for the current frame   */
-/* ------------------------------------------------------------------ */
-
-static int ensure_host_buffers(AVCodecContext *avctx,
-                                NVJPEG2KContext *ctx,
-                                const nvjpeg2kImageInfo_t *info,
-                                const nvjpeg2kImageComponentInfo_t comp_info[],
-                                uint32_t ncomp)
+static int ensure_buffers(AVCodecContext *avctx,
+                          NVJPEG2KContext *ctx,
+                          const nvjpeg2kImageInfo_t *info,
+                          const nvjpeg2kImageComponentInfo_t comp_info[],
+                          uint32_t ncomp)
 {
-    for (uint32_t c = 0; c < ncomp; c++) {
-        uint32_t w     = comp_info[c].component_width;
-        uint32_t h     = comp_info[c].component_height;
-        /* 2 bytes per sample (UINT16) */
-        size_t   pitch = (size_t)w * 2;
-        size_t   total = pitch * h;
+    ctx->fn.CtxSetCurrent(ctx->cuda_ctx);
 
-        if (total > ctx->host_buf_size[c]) {
-            /* Release old buffer */
-            if (ctx->host_buf[c]) {
-                ctx->fn.MemFreeHost(ctx->host_buf[c]);
-                ctx->host_buf[c] = NULL;
+    for (uint32_t c = 0; c < ncomp; c++) {
+        uint32_t w = comp_info[c].component_width;
+        uint32_t h = comp_info[c].component_height;
+        size_t pitch = (size_t)w * 2;
+        size_t total = pitch * h;
+
+        if (total > ctx->dev_buf_size[c]) {
+            if (ctx->dev_buf[c]) {
+                ctx->fn.MemFree(ctx->dev_buf[c]);
+                ctx->dev_buf[c] = 0;
             }
-            /* Allocate new pinned host buffer */
-            CUresult cr = ctx->fn.MemAllocHost(&ctx->host_buf[c], total);
-            if (cr != CUDA_SUCCESS || !ctx->host_buf[c]) {
+            CUresult cr = ctx->fn.MemAlloc(&ctx->dev_buf[c], total);
+            if (cr != CUDA_SUCCESS || !ctx->dev_buf[c]) {
                 av_log(avctx, AV_LOG_ERROR,
-                       "nvjpeg2k: cuMemAllocHost failed for component %u "
-                       "(%u x %u), error %d\n", c, w, h, (int)cr);
+                       "nvjpeg2k: cuMemAlloc failed for component %u (size %zu), error %d\n",
+                       c, total, (int)cr);
                 return AVERROR(ENOMEM);
             }
+            ctx->dev_buf_size[c] = total;
+        }
+
+        if (total > ctx->host_buf_size[c]) {
+            av_freep(&ctx->host_buf[c]);
+            ctx->host_buf[c] = av_malloc(total);
+            if (!ctx->host_buf[c])
+                return AVERROR(ENOMEM);
             ctx->host_buf_size[c] = total;
         }
-        ctx->host_pitch[c] = pitch;
+
+        ctx->dev_pitch[c]  = pitch;
         ctx->buf_width[c]  = w;
         ctx->buf_height[c] = h;
     }
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* decode_frame                                                        */
-/* ------------------------------------------------------------------ */
-
 static int nvjpeg2k_decode_frame(AVCodecContext *avctx, AVFrame *frame,
-                                  int *got_frame, AVPacket *avpkt)
+                                 int *got_frame, AVPacket *avpkt)
 {
     NVJPEG2KContext    *ctx = avctx->priv_data;
     nvjpeg2kStatus_t   st;
@@ -290,61 +293,49 @@ static int nvjpeg2k_decode_frame(AVCodecContext *avctx, AVFrame *frame,
     if (!avpkt->size)
         return 0;
 
-    /* --- 1. Parse the JPEG 2000 bitstream --- */
+    /* Bind CUDA context to current decoding thread */
+    ctx->fn.CtxSetCurrent(ctx->cuda_ctx);
+
+    /* --- 1. Parse bitstream --- */
     st = ctx->fn.StreamParse(ctx->handle,
                              avpkt->data, (size_t)avpkt->size,
                              0, 0,
                              ctx->jpeg_stream);
     if (st != NVJPEG2K_STATUS_SUCCESS) {
-        av_log(avctx, AV_LOG_ERROR,
-               "nvjpeg2k: StreamParse failed (%d)\n", (int)st);
+        av_log(avctx, AV_LOG_ERROR, "nvjpeg2k: StreamParse failed (%d)\n", (int)st);
         return AVERROR_INVALIDDATA;
     }
 
-    /* --- 2. Get image info --- */
+    /* --- 2. Query image metadata --- */
     st = ctx->fn.StreamGetImageInfo(ctx->jpeg_stream, &img_info);
     if (st != NVJPEG2K_STATUS_SUCCESS) {
-        av_log(avctx, AV_LOG_ERROR,
-               "nvjpeg2k: StreamGetImageInfo failed (%d)\n", (int)st);
+        av_log(avctx, AV_LOG_ERROR, "nvjpeg2k: StreamGetImageInfo failed (%d)\n", (int)st);
         return AVERROR_INVALIDDATA;
     }
 
     ncomp = img_info.num_components;
     if (ncomp > MAX_COMPONENTS) {
-        av_log(avctx, AV_LOG_ERROR,
-               "nvjpeg2k: too many components (%u > %d)\n",
+        av_log(avctx, AV_LOG_ERROR, "nvjpeg2k: too many components (%u > %d)\n",
                ncomp, MAX_COMPONENTS);
         return AVERROR_INVALIDDATA;
     }
 
     for (uint32_t c = 0; c < ncomp; c++) {
-        st = ctx->fn.StreamGetImageComponentInfo(ctx->jpeg_stream,
-                                                  &comp_info[c], c);
+        st = ctx->fn.StreamGetImageComponentInfo(ctx->jpeg_stream, &comp_info[c], c);
         if (st != NVJPEG2K_STATUS_SUCCESS) {
-            av_log(avctx, AV_LOG_ERROR,
-                   "nvjpeg2k: StreamGetImageComponentInfo[%u] failed (%d)\n",
+            av_log(avctx, AV_LOG_ERROR, "nvjpeg2k: StreamGetImageComponentInfo[%u] failed (%d)\n",
                    c, (int)st);
             return AVERROR_INVALIDDATA;
         }
     }
 
-    /* --- 3. Determine output pixel format --- */
-    /*
-     * DCI JPEG 2000: 3 components, XYZ colour space.
-     *   → Output AV_PIX_FMT_XYZ12LE (packed, 48 bpp)
-     * Other (e.g. sRGB): 3 components
-     *   → Output AV_PIX_FMT_GBRP16LE (planar 16-bit)
-     * Greyscale: 1 component
-     *   → Output AV_PIX_FMT_GRAY16LE
-     */
+    /* --- 3. Determine pixel format --- */
     enum AVPixelFormat pix_fmt;
-
     if (ncomp == 3) {
-        /* Heuristic: DCI XYZ typically has 12-bit precision */
         if (comp_info[0].precision == 12 &&
             comp_info[1].precision == 12 &&
             comp_info[2].precision == 12 &&
-            avctx->color_primaries == AVCOL_PRI_SMPTE428 /*DCI XYZ*/) {
+            avctx->color_primaries == AVCOL_PRI_SMPTE428) {
             pix_fmt = AV_PIX_FMT_XYZ12LE;
         } else {
             pix_fmt = AV_PIX_FMT_GBRP16LE;
@@ -352,49 +343,45 @@ static int nvjpeg2k_decode_frame(AVCodecContext *avctx, AVFrame *frame,
     } else if (ncomp == 1) {
         pix_fmt = AV_PIX_FMT_GRAY16LE;
     } else {
-        /* Fallback for 4-component or exotic */
         pix_fmt = AV_PIX_FMT_GBRP16LE;
-        ncomp   = 3; /* only decode first 3 */
+        ncomp   = 3;
     }
 
-    /* --- 4. Allocate/resize pinned host buffers --- */
-    ret = ensure_host_buffers(avctx, ctx, &img_info, comp_info, ncomp);
+    /* --- 4. Allocate GPU VRAM buffers & CPU staging buffers --- */
+    ret = ensure_buffers(avctx, ctx, &img_info, comp_info, ncomp);
     if (ret < 0)
         return ret;
 
-    /* --- 5. Build nvjpeg2kImage_t pointing to pinned host memory --- */
-    /*
-     * nvJPEG2000 supports writing directly to pinned (page-locked) host
-     * memory when pixel_data contains CUDA unified virtual addresses
-     * obtained via cuMemAllocHost.  This avoids a separate cudaMemcpy.
-     */
-    void        *pixel_data[MAX_COMPONENTS];
-    size_t       pitch_arr[MAX_COMPONENTS];
-
+    /* --- 5. Setup nvjpeg2kImage_t pointing to GPU device memory --- */
+    void  *pixel_data[MAX_COMPONENTS];
+    size_t pitch_arr[MAX_COMPONENTS];
     for (uint32_t c = 0; c < ncomp; c++) {
-        pixel_data[c] = ctx->host_buf[c];
-        pitch_arr[c]  = ctx->host_pitch[c];
+        pixel_data[c] = (void *)(uintptr_t)ctx->dev_buf[c];
+        pitch_arr[c]  = ctx->dev_pitch[c];
     }
-
     decoded_img.pixel_data     = pixel_data;
     decoded_img.pitch_in_bytes = pitch_arr;
     decoded_img.pixel_type     = NVJPEG2K_UINT16;
     decoded_img.num_components = ncomp;
 
-    /* --- 6. GPU decode --- */
+    /* --- 6. GPU Decode --- */
     st = ctx->fn.Decode(ctx->handle,
                         ctx->decode_state,
                         ctx->jpeg_stream,
                         &decoded_img,
-                        NULL /* default CUDA stream */);
+                        NULL);
     if (st != NVJPEG2K_STATUS_SUCCESS) {
-        av_log(avctx, AV_LOG_ERROR,
-               "nvjpeg2k: Decode failed (%d)\n", (int)st);
+        av_log(avctx, AV_LOG_ERROR, "nvjpeg2k: Decode failed (%d)\n", (int)st);
         return AVERROR_EXTERNAL;
     }
 
-    /* Wait for GPU to finish writing to pinned host memory */
     ctx->fn.CtxSynchronize();
+
+    /* Copy decoded planes from GPU VRAM to CPU staging buffers */
+    for (uint32_t c = 0; c < ncomp; c++) {
+        size_t total = ctx->dev_pitch[c] * comp_info[c].component_height;
+        ctx->fn.MemcpyDtoH(ctx->host_buf[c], ctx->dev_buf[c], total);
+    }
 
     /* --- 7. Allocate AVFrame --- */
     ret = ff_set_dimensions(avctx, (int)img_info.image_width, (int)img_info.image_height);
@@ -406,30 +393,19 @@ static int nvjpeg2k_decode_frame(AVCodecContext *avctx, AVFrame *frame,
     if (ret < 0)
         return ret;
 
-    /* --- 8. Copy decoded data into AVFrame --- */
+    /* --- 8. Pack into AVFrame --- */
     if (pix_fmt == AV_PIX_FMT_XYZ12LE) {
-        /*
-         * nvjpeg2k gives us planar UINT16 (12-bit left-justified? or
-         * right-justified?).  NVIDIA docs: values stored right-justified
-         * (bit 0 = LSB), i.e. range 0–4095 for 12-bit.
-         *
-         * AV_PIX_FMT_XYZ12LE: packed, 3×uint16_le per pixel, range 0–65535.
-         * We scale: out_val = in_val << 4  (12-bit → 16-bit).
-         *
-         * Layout: X in plane[0], Y in plane[1], Z in plane[2].
-         * Packed output: X Y Z X Y Z … (little-endian uint16 each).
-         */
         uint32_t W = img_info.image_width;
         uint32_t H = img_info.image_height;
-        uint8_t *dst  = frame->data[0];
-        int      dstride = frame->linesize[0]; /* bytes */
+        uint8_t *dst = frame->data[0];
+        int dstride  = frame->linesize[0];
 
         const uint16_t *src_x = (const uint16_t *)ctx->host_buf[0];
         const uint16_t *src_y = (const uint16_t *)ctx->host_buf[1];
         const uint16_t *src_z = (const uint16_t *)ctx->host_buf[2];
-        size_t sx_pitch = ctx->host_pitch[0] / 2; /* stride in uint16 elements */
-        size_t sy_pitch = ctx->host_pitch[1] / 2;
-        size_t sz_pitch = ctx->host_pitch[2] / 2;
+        size_t sx_pitch = ctx->dev_pitch[0] / 2;
+        size_t sy_pitch = ctx->dev_pitch[1] / 2;
+        size_t sz_pitch = ctx->dev_pitch[2] / 2;
 
         for (uint32_t y = 0; y < H; y++) {
             uint16_t *d = (uint16_t *)(dst + (size_t)y * dstride);
@@ -442,20 +418,18 @@ static int nvjpeg2k_decode_frame(AVCodecContext *avctx, AVFrame *frame,
                 d[3*x + 2] = (uint16_t)(rz[x] << 4);
             }
         }
-
-        /* Set colour metadata for mpv / libplacebo */
-        frame->color_primaries = AVCOL_PRI_SMPTE428;   /* DCI XYZ */
-        frame->color_trc       = AVCOL_TRC_SMPTE428;   /* linear  */
+        frame->color_primaries = AVCOL_PRI_SMPTE428;
+        frame->color_trc       = AVCOL_TRC_SMPTE428;
         frame->colorspace      = AVCOL_SPC_RGB;
 
     } else if (pix_fmt == AV_PIX_FMT_GRAY16LE) {
         uint32_t W = comp_info[0].component_width;
         uint32_t H = comp_info[0].component_height;
-        uint8_t *dst    = frame->data[0];
-        int      dstride = frame->linesize[0];
+        uint8_t *dst = frame->data[0];
+        int dstride  = frame->linesize[0];
         const uint16_t *src = (const uint16_t *)ctx->host_buf[0];
-        size_t   spitch     = ctx->host_pitch[0] / 2;
-        int      shift      = 16 - (int)comp_info[0].precision;
+        size_t spitch = ctx->dev_pitch[0] / 2;
+        int shift = 16 - (int)comp_info[0].precision;
 
         for (uint32_t y = 0; y < H; y++) {
             uint16_t *d = (uint16_t *)(dst + (size_t)y * dstride);
@@ -463,14 +437,13 @@ static int nvjpeg2k_decode_frame(AVCodecContext *avctx, AVFrame *frame,
             for (uint32_t x = 0; x < W; x++)
                 d[x] = (uint16_t)(s[x] << shift);
         }
-
     } else {
         /*
-         * AV_PIX_FMT_GBRP16LE: 3 planes G, B, R (note: G first).
-         * nvjpeg2k component order matches J2K file (R=0, G=1, B=2).
-         * Map: plane[0]=G, plane[1]=B, plane[2]=R.
+         * AV_PIX_FMT_GBRP16LE: plane[0]=G, plane[1]=B, plane[2]=R.
+         * nvjpeg2k component 0=R, 1=G, 2=B.
+         * Mapping: comp 0 (R) -> plane 2; comp 1 (G) -> plane 0; comp 2 (B) -> plane 1.
          */
-        int plane_map[3] = {1, 2, 0}; /* G→R, B→G, R→B in GBR layout */
+        int plane_map[3] = {2, 0, 1};
         for (uint32_t c = 0; c < ncomp && c < 3; c++) {
             int p = plane_map[c];
             uint32_t W = comp_info[c].component_width;
@@ -478,7 +451,7 @@ static int nvjpeg2k_decode_frame(AVCodecContext *avctx, AVFrame *frame,
             uint8_t *dst = frame->data[p];
             int dstride  = frame->linesize[p];
             const uint16_t *src = (const uint16_t *)ctx->host_buf[c];
-            size_t spitch = ctx->host_pitch[c] / 2;
+            size_t spitch = ctx->dev_pitch[c] / 2;
             int shift = 16 - (int)comp_info[c].precision;
 
             for (uint32_t y = 0; y < H; y++) {
@@ -501,15 +474,11 @@ static int nvjpeg2k_decode_frame(AVCodecContext *avctx, AVFrame *frame,
     return avpkt->size;
 }
 
-/* ------------------------------------------------------------------ */
-/* close / uninit                                                      */
-/* ------------------------------------------------------------------ */
-
 static av_cold int nvjpeg2k_decode_close(AVCodecContext *avctx)
 {
     NVJPEG2KContext *ctx = avctx->priv_data;
 
-    free_host_buffers(ctx);
+    free_buffers(ctx);
 
     if (ctx->jpeg_stream && ctx->fn.StreamDestroy) {
         ctx->fn.StreamDestroy(ctx->jpeg_stream);
@@ -523,6 +492,10 @@ static av_cold int nvjpeg2k_decode_close(AVCodecContext *avctx)
         ctx->fn.Destroy(ctx->handle);
         ctx->handle = NULL;
     }
+    if (ctx->cuda_ctx && ctx->fn.PrimaryCtxRelease) {
+        ctx->fn.PrimaryCtxRelease(ctx->cuda_dev);
+        ctx->cuda_ctx = NULL;
+    }
 
     if (ctx->nvcuda_dll) {
         FreeLibrary(ctx->nvcuda_dll);
@@ -535,10 +508,6 @@ static av_cold int nvjpeg2k_decode_close(AVCodecContext *avctx)
 
     return 0;
 }
-
-/* ------------------------------------------------------------------ */
-/* Codec registration                                                  */
-/* ------------------------------------------------------------------ */
 
 static const enum AVPixelFormat nvjpeg2k_pix_fmts[] = {
     AV_PIX_FMT_XYZ12LE,

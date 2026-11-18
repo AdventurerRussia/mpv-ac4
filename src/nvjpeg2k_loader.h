@@ -171,52 +171,21 @@ typedef nvjpeg2kStatus_t (*PFN_nvjpeg2kDecode)(
     void *cuda_stream);  /* cudaStream_t, NULL = default stream */
 
 /* ------------------------------------------------------------------ */
-/* CUDArt / nvcuda function pointer typedefs                           */
+/* CUDA Driver API types and function pointer typedefs                 */
 /* nvcuda.dll is the driver API — always present with any NVIDIA GPU.  */
-/* We only need cuMemAllocHost / cuMemFreeHost / cuMemcpy2D            */
 /* ------------------------------------------------------------------ */
 
-/* cuMemAllocHost(void **pp, size_t bytesize) */
-typedef CUresult (*PFN_cuMemAllocHost)(void **pp, size_t bytesize);
+typedef int   CUdevice;
+typedef void *CUcontext;
 
-/* cuMemFreeHost(void *p) */
-typedef CUresult (*PFN_cuMemFreeHost)(void *p);
-
-/* cuMemcpy2D — copies 2D region device->host
-   We use the full cuMemcpy2D_v2 from nvcuda.dll.
-   The struct CUDA_MEMCPY2D matches the driver API layout. */
-typedef enum {
-    CU_MEMORYTYPE_HOST   = 1,
-    CU_MEMORYTYPE_DEVICE = 2,
-    CU_MEMORYTYPE_ARRAY  = 3,
-    CU_MEMORYTYPE_UNIFIED = 4,
-} CUmemorytype;
-
-typedef struct {
-    size_t srcXInBytes;
-    size_t srcY;
-    CUmemorytype srcMemoryType;
-    const void  *srcHost;
-    CUdeviceptr  srcDevice;
-    void        *srcArray;    /* unused */
-    size_t       srcPitch;
-
-    size_t dstXInBytes;
-    size_t dstY;
-    CUmemorytype dstMemoryType;
-    void        *dstHost;
-    CUdeviceptr  dstDevice;
-    void        *dstArray;    /* unused */
-    size_t       dstPitch;
-
-    size_t WidthInBytes;
-    size_t Height;
-} CUDA_MEMCPY2D;
-
-/* cuMemcpy2D(const CUDA_MEMCPY2D *pCopy) */
-typedef CUresult (*PFN_cuMemcpy2D)(const CUDA_MEMCPY2D *pCopy);
-
-/* cuCtxSynchronize() */
+typedef CUresult (*PFN_cuInit)(unsigned int Flags);
+typedef CUresult (*PFN_cuDeviceGet)(CUdevice *device, int ordinal);
+typedef CUresult (*PFN_cuDevicePrimaryCtxRetain)(CUcontext *pctx, CUdevice dev);
+typedef CUresult (*PFN_cuDevicePrimaryCtxRelease)(CUdevice dev);
+typedef CUresult (*PFN_cuCtxSetCurrent)(CUcontext ctx);
+typedef CUresult (*PFN_cuMemAlloc_v2)(CUdeviceptr *dptr, size_t bytesize);
+typedef CUresult (*PFN_cuMemFree_v2)(CUdeviceptr dptr);
+typedef CUresult (*PFN_cuMemcpyDtoH_v2)(void *dstHost, CUdeviceptr srcDevice, size_t ByteCount);
 typedef CUresult (*PFN_cuCtxSynchronize)(void);
 
 /* ------------------------------------------------------------------ */
@@ -236,9 +205,14 @@ typedef struct NVJPEG2KFunctions {
     PFN_nvjpeg2kStreamGetImageComponentInfo    StreamGetImageComponentInfo;
     PFN_nvjpeg2kDecode                         Decode;
     /* nvcuda.dll (driver API) */
-    PFN_cuMemAllocHost                         MemAllocHost;
-    PFN_cuMemFreeHost                          MemFreeHost;
-    PFN_cuMemcpy2D                             Memcpy2D;
+    PFN_cuInit                                 Init;
+    PFN_cuDeviceGet                            DeviceGet;
+    PFN_cuDevicePrimaryCtxRetain               PrimaryCtxRetain;
+    PFN_cuDevicePrimaryCtxRelease              PrimaryCtxRelease;
+    PFN_cuCtxSetCurrent                        CtxSetCurrent;
+    PFN_cuMemAlloc_v2                          MemAlloc;
+    PFN_cuMemFree_v2                           MemFree;
+    PFN_cuMemcpyDtoH_v2                        MemcpyDtoH;
     PFN_cuCtxSynchronize                       CtxSynchronize;
 } NVJPEG2KFunctions;
 
