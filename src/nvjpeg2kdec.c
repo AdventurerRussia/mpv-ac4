@@ -214,14 +214,13 @@ static const uint8_t *find_codestream(const uint8_t *data, int size, int *out_si
 
     if (size >= 2 && data[0] == 0xFF && data[1] == 0x4F)
         return data;
-    if (size < 12 || rb32(data) != 12 || rb32(data + 4) != MKTAG('j', 'P', ' ', ' '))
+    if (size < 12 || rb32(data) != 12 || memcmp(data + 4, "jP  ", 4) != 0)
         return data;
 
     usize = (size_t)size;
     while (off + 8 <= usize) {
         size_t rem = usize - off;
         uint32_t lbox = rb32(data + off);
-        uint32_t type = rb32(data + off + 4);
         size_t header_len;
         size_t box_len;
 
@@ -247,7 +246,7 @@ static const uint8_t *find_codestream(const uint8_t *data, int size, int *out_si
             break;
         }
 
-        if (type == MKTAG('j', 'p', '2', 'c')) {
+        if (!memcmp(data + off + 4, "jp2c", 4)) {
             size_t payload_off = off + header_len;
             size_t plen = box_len - header_len;
             if (payload_off < usize && plen > 0) {
