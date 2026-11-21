@@ -265,13 +265,14 @@ static const uint8_t *find_codestream(const uint8_t *data, int size, int *out_si
     return data;
 }
 
-static void parse_hints(const uint8_t *data, int size, int *rsiz, int *mct, int *bad_off)
+static void parse_hints(const uint8_t *data, int size, int *rsiz, int *mct, int *bad_off, int *has_nlt3)
 {
     const uint8_t *cs;
     int cs_size, i;
     *rsiz = -1;
     *mct = -1;
     *bad_off = 0;
+    *has_nlt3 = 0;
     cs = find_codestream(data, size, &cs_size);
     if (cs_size < 2 || cs[0] != 0xFF || cs[1] != 0x4F)
         return;
@@ -303,6 +304,11 @@ static void parse_hints(const uint8_t *data, int size, int *rsiz, int *mct, int 
                 *bad_off = 1;
         } else if (marker == 0x52 && len >= 7) {
             *mct = cs[i + 6];
+        } else if (marker == 0x54 && len >= 4) {
+            /* NLT marker segment (ISO/IEC 15444-2 Annex A.4.10) */
+            /* If Cnlt is 1 byte, Tnlt is at cs[i+3]; if 2 bytes, at cs[i+4] */
+            if (cs[i + 2] == 3 || (len >= 5 && cs[i + 3] == 3) || (len >= 6 && cs[i + 4] == 3))
+                *has_nlt3 = 1;
         }
         i += len;
     }
@@ -708,6 +714,7 @@ static int sw_fallback(AVCodecContext *avctx, NVJPEG2KContext *ctx,
         av_log(avctx, AV_LOG_INFO,
                "nvjpeg2k: stream is not supported on the GPU, using software jpeg2000\n");
     }
+
     av_frame_unref(frame);
     ret = avcodec_send_packet(ctx->sw, avpkt);
     if (ret < 0)
@@ -715,11 +722,17 @@ static int sw_fallback(AVCodecContext *avctx, NVJPEG2KContext *ctx,
     ret = avcodec_receive_frame(ctx->sw, frame);
     if (ret < 0)
         return ret;
+
     avctx->pix_fmt = frame->format;
     avctx->width = frame->width;
     avctx->height = frame->height;
     avctx->profile = ctx->sw->profile;
     avctx->bits_per_raw_sample = ctx->sw->bits_per_raw_sample;
+
+    ret = ff_attach_decode_data(avctx, frame);
+    if (ret < 0)
+        return ret;
+
     return avpkt->size;
 }
 
@@ -873,6 +886,9 @@ static av_cold int nvjpeg2k_decode_init(AVCodecContext *avctx)
     LOAD_SYM(ctx->nvjpeg2k_dll, "nvjpeg2k_0.dll", Decode, "nvjpeg2kDecode");
     LOAD_SYM(ctx->nvjpeg2k_dll, "nvjpeg2k_0.dll", GetProperty, "nvjpeg2kGetProperty");
     LOAD_SYM(ctx->nvjpeg2k_dll, "nvjpeg2k_0.dll", StreamGetColorSpace, "nvjpeg2kStreamGetColorSpace");
+    load_sym(avctx, ctx->nvjpeg2k_dll, "nvjpeg2k_0.dll",
+             "nvjpeg2kStreamGetComponentNLTInfo",
+             (void **)&ctx->fn.StreamGetComponentNLTInfo);
 
     LOAD_SYM(ctx->nvcuda_dll, "nvcuda.dll", Init, "cuInit");
     LOAD_SYM(ctx->nvcuda_dll, "nvcuda.dll", DeviceGet, "cuDeviceGet");
@@ -961,7 +977,7 @@ static int nvjpeg2k_decode_frame(AVCodecContext *avctx, AVFrame *frame,
     int plane_map[MAX_COMPONENTS] = { 0, 1, 2, 3 };
     int ret = 0, switched = -1, fallback = 0, have_meta = 0;
     CUcontext saved = NULL;
-    int rsiz = -1, mct = -1, bad_off = 0, bpp, prec;
+    int rsiz = -1, mct = -1, bad_off = 0, has_nlt3 = 0, bpp, prec;
     uint32_t ncomp;
     enum AVPixelFormat pix_fmt;
     enum NVColor col;
@@ -980,10 +996,16 @@ static int nvjpeg2k_decode_frame(AVCodecContext *avctx, AVFrame *frame,
     if ((switched = cuda_enter(avctx, ctx, &saved)) < 0)
         return switched;
 
-    parse_hints(avpkt->data, avpkt->size, &rsiz, &mct, &bad_off);
+    parse_hints(avpkt->data, avpkt->size, &rsiz, &mct, &bad_off, &has_nlt3);
     if (bad_off) {
         av_log(avctx, AV_LOG_INFO,
                "nvjpeg2k: non-zero image/tile offset is not supported on the GPU\n");
+        fallback = 1;
+        goto done;
+    }
+    if (has_nlt3) {
+        av_log(avctx, AV_LOG_INFO,
+               "nvjpeg2k: NLT type 3 marker present in codestream, using software fallback\n");
         fallback = 1;
         goto done;
     }
@@ -1034,6 +1056,21 @@ static int nvjpeg2k_decode_frame(AVCodecContext *avctx, AVFrame *frame,
     }
     if (ret < 0)
         goto done;
+
+    if (ctx->fn.StreamGetComponentNLTInfo) {
+        for (uint32_t c = 0; c < ncomp; c++) {
+            nvjpeg2kNLTInfo_t nlt_info;
+            memset(&nlt_info, 0, sizeof(nlt_info));
+            st = ctx->fn.StreamGetComponentNLTInfo(ctx->jpeg_stream, c, &nlt_info);
+            if (st == NVJPEG2K_STATUS_SUCCESS && nlt_info.type == NVJPEG2K_NLT_TYPE3) {
+                av_log(avctx, AV_LOG_INFO,
+                       "nvjpeg2k: component %u uses NLT type 3 (floating-point), "
+                       "using software fallback\n", c);
+                fallback = 1;
+                goto done;
+            }
+        }
+    }
 
     prec = comp_info[0].precision;
     col = classify_color(avctx, ctx, ctx->jpeg_stream, have_meta, ncomp, prec, rsiz, mct);

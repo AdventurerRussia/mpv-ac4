@@ -52,7 +52,19 @@ typedef enum {
     NVJPEG2K_UINT8  = 0,
     NVJPEG2K_UINT16 = 1,
     NVJPEG2K_INT16  = 2,
+    NVJPEG2K_FP16   = 3,
+    NVJPEG2K_FP32   = 4,
 } nvjpeg2kImageType_t;
+
+typedef enum {
+    NVJPEG2K_NLT_NONE  = 0,
+    NVJPEG2K_NLT_TYPE3 = 3,
+} nvjpeg2kNLTType_t;
+
+typedef struct {
+    nvjpeg2kNLTType_t type;
+    uint8_t           bit_depth;
+} nvjpeg2kNLTInfo_t;
 
 typedef enum {
     NVJPEG2K_COLORSPACE_UNKNOWN = 0,
@@ -120,6 +132,8 @@ typedef nvjpeg2kStatus_t (*PFN_nvjpeg2kGetProperty)(
     nvjpeg2kLibraryPropertyType type, int *value);
 typedef nvjpeg2kStatus_t (*PFN_nvjpeg2kStreamGetColorSpace)(
     nvjpeg2kStream_t stream, nvjpeg2kColorSpace_t *colorspace);
+typedef nvjpeg2kStatus_t (*PFN_nvjpeg2kStreamGetComponentNLTInfo)(
+    nvjpeg2kStream_t stream_handle, uint32_t component_id, nvjpeg2kNLTInfo_t *nlt_info);
 
 typedef int   CUdevice;
 typedef void *CUcontext;
@@ -155,6 +169,7 @@ typedef struct NVJPEG2KFunctions {
     PFN_nvjpeg2kDecode                         Decode;
     PFN_nvjpeg2kGetProperty                    GetProperty;
     PFN_nvjpeg2kStreamGetColorSpace            StreamGetColorSpace;
+    PFN_nvjpeg2kStreamGetComponentNLTInfo      StreamGetComponentNLTInfo;
     PFN_cuInit                                 Init;
     PFN_cuDeviceGet                            DeviceGet;
     PFN_cuDevicePrimaryCtxRetain               PrimaryCtxRetain;
